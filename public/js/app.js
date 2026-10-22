@@ -2,6 +2,7 @@
  * Glorious_E - Unified Combined Multi-Chat
  * Dynamic WebSocket & API client for Render.com & Localhost
  * With Clean Streamer Tag / Mention Highlight (@Glorious_E, @GloriousE, @glorious, Kick untagged)
+ * Ignores automated bot accounts (Nightbot, Fossabot, StreamElements, etc.)
  */
 
 (function() {
@@ -17,6 +18,22 @@
         defaultYtVideoId: 'hjuUwbPqkG8',
         maxMessagesInDom: 250
     };
+
+    // Bots to ignore for @mentions
+    const IGNORED_BOT_USERS = new Set([
+        'nightbot',
+        'fossabot',
+        'streamelements',
+        'streamlabs',
+        'moobot',
+        'botrix'
+    ]);
+
+    function isBotUser(username) {
+        if (!username) return false;
+        const normalized = username.toLowerCase().replace(/[^a-z0-9_]/g, '');
+        return IGNORED_BOT_USERS.has(normalized);
+    }
 
     // State
     const state = {
@@ -151,8 +168,9 @@
      * Parse message text: URLs, mentions, emojis, Kick emotes, Twitch emotes, 7TV emotes.
      * Order is strictly preserved so <img> tags are never corrupted by the URL regex.
      * Single-pass mention replacer prevents double @@ or nested spans.
+     * Ignores bots for streamer highlight styling.
      */
-    function parseMessageContent(text, platform, rawEmotes) {
+    function parseMessageContent(text, platform, rawEmotes, isBot = false) {
         if (!text) return '';
         let safe = escapeHtml(text);
         
@@ -162,7 +180,7 @@
         // 2. Highlight @mentions in a SINGLE pass (avoids @@ or nested spans)
         safe = safe.replace(/@([a-zA-Z0-9_\u00A0-\uFFFF]+)|\b(glorious_e|gloriouse)\b/gi, (fullMatch, handleWithAt, bareHandle) => {
             if (handleWithAt) {
-                const isStreamer = /^(?:glorious_e|gloriouse|glorious)$/i.test(handleWithAt);
+                const isStreamer = !isBot && /^(?:glorious_e|gloriouse|glorious)$/i.test(handleWithAt);
                 if (isStreamer) {
                     return `<span class="chat-mention streamer-mention">@${handleWithAt}</span>`;
                 }
@@ -170,7 +188,10 @@
             }
             if (bareHandle) {
                 // If typed on Kick without '@', render cleanly once
-                return `<span class="chat-mention streamer-mention">@${bareHandle}</span>`;
+                if (!isBot) {
+                    return `<span class="chat-mention streamer-mention">@${bareHandle}</span>`;
+                }
+                return bareHandle;
             }
             return fullMatch;
         });
@@ -241,7 +262,8 @@
 
         const platform = (msg.platform || 'twitch').toLowerCase();
         const isSelf = /^(?:glorious_e|gloriouse|glorious)$/i.test(msg.username || '');
-        const isMentioned = !isSelf && isStreamerMentioned(msg.message);
+        const isBot = isBotUser(msg.username);
+        const isMentioned = !isSelf && !isBot && isStreamerMentioned(msg.message);
         
         // Increment counts
         if (state.counts[platform] !== undefined) {
@@ -268,7 +290,7 @@
         const iconSvg = ICONS[platform] || ICONS.twitch;
         const color = msg.color || (platform === 'kick' ? '#00e701' : platform === 'twitch' ? '#a970ff' : '#ff4d4d');
         const safeUser = escapeHtml(msg.username || 'User');
-        const parsedText = parseMessageContent(msg.message, platform, msg.rawEmotes);
+        const parsedText = parseMessageContent(msg.message, platform, msg.rawEmotes, isBot);
 
         let avatarHtml = '';
         if (msg.avatar) {
@@ -675,13 +697,16 @@
         elements.btnTheater.addEventListener('click', toggleTheater);
         elements.btnExitTheater.addEventListener('click', toggleTheater);
 
-        // Keyboard Shortcuts
+        // Keyboard Shortcuts (ignores when Ctrl, Alt, or Meta is pressed)
         window.addEventListener('keydown', (e) => {
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+            // Never interfere with Ctrl+C (copy), Ctrl+A, Ctrl+V, etc.
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
+
             if (e.key === 'f' || e.key === 'F') {
                 e.preventDefault();
                 toggleTheater();
-            } else if (e.key === 'c' || e.key === 'C') {
+            } else if (e.key === 'x' || e.key === 'X' || e.key === 'Delete') {
                 elements.btnClearChat.click();
             } else if (e.key === '1') {
                 elements.filterKick.click();

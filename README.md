@@ -83,7 +83,7 @@ Puis ouvrez votre navigateur sur : **[http://localhost:8088](http://localhost:80
 6. **Outils de discussion** :
    - **Auto-scroll intelligent** : Le chat défile tout seul. Si vous remontez pour lire un message, le défilement se met en pause et un bouton flottant `↓ Nouveaux messages` apparaît.
    - Réglage de la taille de texte : boutons **A-** et **A+**.
-   - Bouton **Clear** (Raccourci <kbd>C</kbd>) pour vider l'écran.
+   - Bouton **Clear** (Raccourci <kbd>X</kbd> ou <kbd>Suppr</kbd>) pour vider l'écran sans interférer avec <kbd>Ctrl+C</kbd>.
    - Mode Plein écran / Théâtre (Raccourci <kbd>F</kbd>) pour masquer les barres d'outils.
    - Tiroir vidéo rétractable **Video Stream** : pour regarder la vidéo du stream (Twitch, Kick ou YouTube) au-dessus du chat.
 

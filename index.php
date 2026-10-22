@@ -153,7 +153,7 @@ $currentGame = $twitchData['category'] ?? $kickData['category'] ?? 'Escape from 
                 <button class="font-size-btn" id="btnFontMinus" title="Smaller font size">A-</button>
                 <button class="font-size-btn" id="btnFontPlus" title="Larger font size">A+</button>
                 <button class="btn-small" id="btnToggleScroll" title="Toggle Auto-Scroll">Scroll</button>
-                <button class="btn-small" id="btnClearChat" title="Clear current messages (Press C)">Clear</button>
+                <button class="btn-small" id="btnClearChat" title="Clear current messages (Press X or Delete)">Clear</button>
             </div>
         </div>
     </div>
@@ -226,7 +226,7 @@ $currentGame = $twitchData['category'] ?? $kickData['category'] ?? 'Escape from 
         <div class="footer-right">
             <span>Shortcuts:</span>
             <span><kbd class="kbd-badge">F</kbd> Fullscreen</span>
-            <span><kbd class="kbd-badge">C</kbd> Clear</span>
+            <span><kbd class="kbd-badge">X</kbd> Clear</span>
             <span><kbd class="kbd-badge">1</kbd> <kbd class="kbd-badge">2</kbd> <kbd class="kbd-badge">3</kbd> <kbd class="kbd-badge">4</kbd> Filters</span>
         </div>
     </footer>
