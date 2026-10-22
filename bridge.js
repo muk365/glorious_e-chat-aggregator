@@ -131,6 +131,7 @@ function parseTwitchPrivmsg(raw) {
     
     const displayName = tags['display-name'] || username;
     const color = tags['color'] || '#9146ff';
+    const isFirstMsg = tags['first-msg'] === '1' || tags['msg-id'] === 'first-msg';
     
     addMessage({
         platform: 'twitch',
@@ -139,6 +140,7 @@ function parseTwitchPrivmsg(raw) {
         message: message,
         badges: tags['badges'] || '',
         rawEmotes: tags['emotes'] || '',
+        firstMsg: isFirstMsg,
         timestamp: Date.now()
     });
 }

@@ -118,20 +118,24 @@
      * - YouTube: @GloriousE, @gloriouse
      * - Kick: @Glorious_E (manual tag), or bare 'glorious_e', 'gloriouse' (since Kick lacks user autocomplete)
      * - Direct address: "hey glorious", "yo glorious", "glorious, ...", "glorious: ..."
-     * - Protects against false positives (e.g. "what a glorious raid")
+     * - Protects against false positives (e.g. "what a glorious raid" or URLs with clip/channel paths)
      */
     function isStreamerMentioned(text) {
         if (!text) return false;
+        // Strip URLs before checking for streamer mention so a link to a clip or channel doesn't trigger mention alert
+        const textWithoutUrls = text.replace(/https?:\/\/[^\s<]+/gi, '').trim();
+        if (!textWithoutUrls) return false;
+
         // 1. Direct @ mention with any handle variation: @Glorious_E, @GloriousE, @glorious
-        if (/@(?:glorious_e|gloriouse|glorious)\b/i.test(text)) return true;
+        if (/@(?:glorious_e|gloriouse|glorious)\b/i.test(textWithoutUrls)) return true;
 
         // 2. Exact handle name with or without @ (glorious_e, gloriouse)
-        if (/\b(?:glorious_e|gloriouse)\b/i.test(text)) return true;
+        if (/\b(?:glorious_e|gloriouse)\b/i.test(textWithoutUrls)) return true;
 
         // 3. Direct addressing of streamer with greeting or punctuation
-        if (/\b(?:hey|yo|hi|hello|salut|coucou|gg|ggs|thanks|merci|ask|telling)\s+glorious\b/i.test(text)) return true;
-        if (/\bglorious\s*[:,?!~]/i.test(text)) return true;
-        if (/^\s*glorious\s+(?:did|do|can|are|is|will|have|what|how|why|when|where|who|you|u|bro|man|check|look|tell|pls|please)\b/i.test(text)) return true;
+        if (/\b(?:hey|yo|hi|hello|salut|coucou|gg|ggs|thanks|merci|ask|telling)\s+glorious\b/i.test(textWithoutUrls)) return true;
+        if (/\bglorious\s*[:,?!~]/i.test(textWithoutUrls)) return true;
+        if (/^\s*glorious\s+(?:did|do|can|are|is|will|have|what|how|why|when|where|who|you|u|bro|man|check|look|tell|pls|please)\b/i.test(textWithoutUrls)) return true;
 
         return false;
     }
@@ -166,7 +170,8 @@
 
     /**
      * Parse message text: URLs, mentions, emojis, Kick emotes, Twitch emotes, 7TV emotes.
-     * Order is strictly preserved so <img> tags are never corrupted by the URL regex.
+     * Order is strictly preserved: URLs are placeholder-protected so mentions and emotes
+     * can NEVER corrupt <a href="..."> attributes.
      * Single-pass mention replacer prevents double @@ or nested spans.
      * Ignores bots for streamer highlight styling.
      */
@@ -174,8 +179,13 @@
         if (!text) return '';
         let safe = escapeHtml(text);
         
-        // 1. Convert URLs first (BEFORE inserting any <img> tags, so img src is never corrupted)
-        safe = safe.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
+        // 1. Extract URLs into temporary placeholders so mentions, emojis, and emotes never touch URL text or hrefs
+        const urls = [];
+        safe = safe.replace(/(https?:\/\/[^\s<]+)/g, (match) => {
+            const idx = urls.length;
+            urls.push(match);
+            return `___URL_${idx}___`;
+        });
 
         // 2. Highlight @mentions in a SINGLE pass (avoids @@ or nested spans)
         safe = safe.replace(/@([a-zA-Z0-9_\u00A0-\uFFFF]+)|\b(glorious_e|gloriouse)\b/gi, (fullMatch, handleWithAt, bareHandle) => {
@@ -196,8 +206,8 @@
             return fullMatch;
         });
 
-        // 3. YouTube Emojis (__YTEMOTE__:url:label__)
-        safe = safe.replace(/__YTEMOTE__:([^:]+):([^_]+)__/g, (m, url, label) => {
+        // 3. YouTube Emojis (__YTEMOTE__:url:label__) - handles all emoji labels with underscores
+        safe = safe.replace(/__YTEMOTE__:([^:]+):(.*?)__/g, (m, url, label) => {
             const decUrl = decodeURIComponent(url);
             const decLabel = decodeURIComponent(label);
             return `<img class="chat-emote" src="${escapeHtml(decUrl)}" alt="${escapeHtml(decLabel)}" title="${escapeHtml(decLabel)}">`;
@@ -241,6 +251,12 @@
             safe = tokens.join('');
         }
 
+        // 7. Restore URLs as proper clickable <a> links
+        safe = safe.replace(/___URL_(\d+)___/g, (m, idx) => {
+            const u = urls[parseInt(idx, 10)];
+            return `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`;
+        });
+
         return safe;
     }
 
@@ -264,6 +280,7 @@
         const isSelf = /^(?:glorious_e|gloriouse|glorious)$/i.test(msg.username || '');
         const isBot = isBotUser(msg.username);
         const isMentioned = !isSelf && !isBot && isStreamerMentioned(msg.message);
+        const isFirstMsg = !!msg.firstMsg && platform === 'twitch';
         
         // Increment counts
         if (state.counts[platform] !== undefined) {
@@ -278,6 +295,9 @@
         row.className = `chat-message-row platform-${platform}`;
         if (isMentioned) {
             row.classList.add('streamer-highlight');
+        }
+        if (isFirstMsg) {
+            row.classList.add('twitch-first-chatter');
         }
         if (!state.filters[platform]) {
             row.classList.add('hidden-by-filter');
@@ -297,6 +317,11 @@
             avatarHtml = `<img src="${escapeHtml(msg.avatar)}" alt="" class="chat-avatar" loading="lazy" onerror="this.style.display='none'">`;
         }
 
+        let firstMsgHtml = '';
+        if (isFirstMsg) {
+            firstMsgHtml = `<span class="first-chatter-pill" title="First time chatting in channel">👋 First</span>`;
+        }
+
         row.innerHTML = `
             <span class="chat-time">${timeStr}</span>
             <span class="platform-badge-pill ${platform}" title="${platform.toUpperCase()} Chat">
@@ -304,7 +329,7 @@
             </span>
             ${avatarHtml}
             <div class="chat-content-wrap">
-                <span class="chat-author" style="color:${color}">${safeUser}</span>:
+                ${firstMsgHtml}<span class="chat-author" style="color:${color}">${safeUser}</span>:
                 <span class="chat-text">${parsedText}</span>
             </div>
         `;

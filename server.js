@@ -307,6 +307,8 @@ function parseTwitchPrivmsg(raw) {
         tags[k] = v;
     });
     
+    const isFirstMsg = tags['first-msg'] === '1' || tags['msg-id'] === 'first-msg';
+
     addMessage({
         platform: 'twitch',
         username: tags['display-name'] || username,
@@ -314,6 +316,7 @@ function parseTwitchPrivmsg(raw) {
         message: message,
         badges: tags['badges'] || '',
         rawEmotes: tags['emotes'] || '',
+        firstMsg: isFirstMsg,
         timestamp: Date.now()
     });
 }
