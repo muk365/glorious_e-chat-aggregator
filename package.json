@@ -1,0 +1,22 @@
+{
+  "name": "glorious-e-multi-chat",
+  "version": "1.0.0",
+  "description": "Unified Combined Multi-Chat for Glorious_E (Kick, Twitch, YouTube)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "twitch",
+    "kick",
+    "youtube",
+    "chat",
+    "aggregator",
+    "7tv"
+  ],
+  "author": "",
+  "license": "MIT"
+}

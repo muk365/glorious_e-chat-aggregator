@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: glorious-e-chat
+    env: node
+    plan: free
+    buildCommand: ""
+    startCommand: node server.js
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: NODE_ENV
+        value: production
