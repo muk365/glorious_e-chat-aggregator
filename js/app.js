@@ -1,7 +1,7 @@
 /**
  * Glorious_E - Unified Combined Multi-Chat
  * Dynamic WebSocket & API client for Render.com & Localhost
- * With Streamer Tag / Mention Highlight (@Glorious_E, @GloriousE, @glorious, Kick untagged)
+ * With Clean Streamer Tag / Mention Highlight (@Glorious_E, @GloriousE, @glorious, Kick untagged)
  */
 
 (function() {
@@ -27,7 +27,6 @@
         autoScroll: true,
         unreadCount: 0,
         mentionsOnly: false,
-        soundEnabled: true,
         filters: {
             kick: true,
             twitch: true,
@@ -75,7 +74,6 @@
         // Tools
         btnClearChat: document.getElementById('btnClearChat'),
         btnToggleScroll: document.getElementById('btnToggleScroll'),
-        btnToggleSound: document.getElementById('btnToggleSound'),
         btnFontMinus: document.getElementById('btnFontMinus'),
         btnFontPlus: document.getElementById('btnFontPlus'),
         btnToggleVideo: document.getElementById('btnToggleVideo'),
@@ -121,45 +119,6 @@
         return false;
     }
 
-    /**
-     * Subtle audio chime synthesizer via Web Audio API (zero external assets needed)
-     */
-    let audioCtx = null;
-    function playMentionChime() {
-        if (!state.soundEnabled) return;
-        try {
-            if (!audioCtx) {
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            if (audioCtx.state === 'suspended') {
-                audioCtx.resume();
-            }
-            const now = audioCtx.currentTime;
-            // 2-tone melodic chime: E5 (659Hz) -> A5 (880Hz)
-            const osc1 = audioCtx.createOscillator();
-            const gain1 = audioCtx.createGain();
-            osc1.type = 'sine';
-            osc1.frequency.setValueAtTime(659.25, now);
-            gain1.gain.setValueAtTime(0.12, now);
-            gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
-            osc1.connect(gain1);
-            gain1.connect(audioCtx.destination);
-            osc1.start(now);
-            osc1.stop(now + 0.22);
-
-            const osc2 = audioCtx.createOscillator();
-            const gain2 = audioCtx.createGain();
-            osc2.type = 'sine';
-            osc2.frequency.setValueAtTime(880, now + 0.1);
-            gain2.gain.setValueAtTime(0.14, now + 0.1);
-            gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
-            osc2.connect(gain2);
-            gain2.connect(audioCtx.destination);
-            osc2.start(now + 0.1);
-            osc2.stop(now + 0.4);
-        } catch (e) {}
-    }
-
     function showToast(msg, type = 'info') {
         if (!elements.toastContainer) return;
         const toast = document.createElement('div');
@@ -191,6 +150,7 @@
     /**
      * Parse message text: URLs, mentions, emojis, Kick emotes, Twitch emotes, 7TV emotes.
      * Order is strictly preserved so <img> tags are never corrupted by the URL regex.
+     * Single-pass mention replacer prevents double @@ or nested spans.
      */
     function parseMessageContent(text, platform, rawEmotes) {
         if (!text) return '';
@@ -199,16 +159,21 @@
         // 1. Convert URLs first (BEFORE inserting any <img> tags, so img src is never corrupted)
         safe = safe.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
 
-        // 2. Highlight @mentions (distinct gold styling for streamer tags)
-        safe = safe.replace(/(@[a-zA-Z0-9_\u00A0-\uFFFF]+)/g, (match) => {
-            if (/@(?:glorious_e|gloriouse|glorious)$/i.test(match)) {
-                return `<span class="chat-mention streamer-mention">${match}</span>`;
+        // 2. Highlight @mentions in a SINGLE pass (avoids @@ or nested spans)
+        safe = safe.replace(/@([a-zA-Z0-9_\u00A0-\uFFFF]+)|\b(glorious_e|gloriouse)\b/gi, (fullMatch, handleWithAt, bareHandle) => {
+            if (handleWithAt) {
+                const isStreamer = /^(?:glorious_e|gloriouse|glorious)$/i.test(handleWithAt);
+                if (isStreamer) {
+                    return `<span class="chat-mention streamer-mention">@${handleWithAt}</span>`;
+                }
+                return `<span class="chat-mention">@${handleWithAt}</span>`;
             }
-            return `<span class="chat-mention">${match}</span>`;
+            if (bareHandle) {
+                // If typed on Kick without '@', render cleanly once
+                return `<span class="chat-mention streamer-mention">@${bareHandle}</span>`;
+            }
+            return fullMatch;
         });
-
-        // 2b. Highlight bare 'glorious_e' or 'gloriouse' in text if not already tagged (especially for Kick)
-        safe = safe.replace(/\b(glorious_e|gloriouse)\b(?![^<]*>)/gi, '<span class="chat-mention streamer-mention">@$1</span>');
 
         // 3. YouTube Emojis (__YTEMOTE__:url:label__)
         safe = safe.replace(/__YTEMOTE__:([^:]+):([^_]+)__/g, (m, url, label) => {
@@ -284,7 +249,6 @@
         }
         if (isMentioned) {
             state.counts.mentions++;
-            playMentionChime();
         }
         updateFilterBadges();
 
@@ -306,11 +270,6 @@
         const safeUser = escapeHtml(msg.username || 'User');
         const parsedText = parseMessageContent(msg.message, platform, msg.rawEmotes);
 
-        let mentionTagHtml = '';
-        if (isMentioned) {
-            mentionTagHtml = `<span class="streamer-mention-tag" title="Streamer mentioned">★ MENTION</span>`;
-        }
-
         let avatarHtml = '';
         if (msg.avatar) {
             avatarHtml = `<img src="${escapeHtml(msg.avatar)}" alt="" class="chat-avatar" loading="lazy" onerror="this.style.display='none'">`;
@@ -321,7 +280,6 @@
             <span class="platform-badge-pill ${platform}" title="${platform.toUpperCase()} Chat">
                 ${iconSvg}
             </span>
-            ${mentionTagHtml}
             ${avatarHtml}
             <div class="chat-content-wrap">
                 <span class="chat-author" style="color:${color}">${safeUser}</span>:
@@ -667,25 +625,6 @@
             if (state.autoScroll) scrollToBottom();
             showToast(`Auto-scroll ${state.autoScroll ? 'enabled' : 'paused'}`, 'info');
         });
-
-        // Audio chime toggle
-        if (elements.btnToggleSound) {
-            const savedSound = localStorage.getItem('mention_sound_enabled');
-            if (savedSound !== null) {
-                state.soundEnabled = savedSound === '1';
-                elements.btnToggleSound.textContent = state.soundEnabled ? '🔔 Chime: ON' : '🔕 Chime: OFF';
-                elements.btnToggleSound.classList.toggle('active', state.soundEnabled);
-            }
-
-            elements.btnToggleSound.addEventListener('click', () => {
-                state.soundEnabled = !state.soundEnabled;
-                try { localStorage.setItem('mention_sound_enabled', state.soundEnabled ? '1' : '0'); } catch(e) {}
-                elements.btnToggleSound.textContent = state.soundEnabled ? '🔔 Chime: ON' : '🔕 Chime: OFF';
-                elements.btnToggleSound.classList.toggle('active', state.soundEnabled);
-                if (state.soundEnabled) playMentionChime();
-                showToast(`Mention audio chime: ${state.soundEnabled ? 'ON' : 'OFF'}`, 'info');
-            });
-        }
 
         // Font Size Adjusters
         elements.btnFontMinus.addEventListener('click', () => {
