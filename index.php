@@ -99,6 +99,14 @@ $currentGame = $twitchData['category'] ?? $kickData['category'] ?? 'Escape from 
                 <span class="chip-dot"></span>
                 <span class="chip-count" id="countYoutube">0</span>
             </button>
+
+            <!-- Streamer Mentions Filter Chip -->
+            <button class="filter-chip mentions" id="filterMentions" title="Click to view only @Glorious_E tagged messages (Press 4)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="#f59e0b"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+                <span>@Mentions</span>
+                <span class="chip-dot"></span>
+                <span class="chip-count" id="countMentions">0</span>
+            </button>
         </div>
 
         <!-- Right Controls -->
@@ -145,6 +153,7 @@ $currentGame = $twitchData['category'] ?? $kickData['category'] ?? 'Escape from 
                 <button class="font-size-btn" id="btnFontMinus" title="Smaller font size">A-</button>
                 <button class="font-size-btn" id="btnFontPlus" title="Larger font size">A+</button>
                 <button class="btn-small" id="btnToggleScroll" title="Toggle Auto-Scroll">Scroll</button>
+                <button class="btn-small" id="btnToggleSound" title="Toggle audio chime on @Glorious_E mentions">🔔 Chime: ON</button>
                 <button class="btn-small" id="btnClearChat" title="Clear current messages (Press C)">Clear</button>
             </div>
         </div>
@@ -219,7 +228,7 @@ $currentGame = $twitchData['category'] ?? $kickData['category'] ?? 'Escape from 
             <span>Shortcuts:</span>
             <span><kbd class="kbd-badge">F</kbd> Fullscreen</span>
             <span><kbd class="kbd-badge">C</kbd> Clear</span>
-            <span><kbd class="kbd-badge">1</kbd> <kbd class="kbd-badge">2</kbd> <kbd class="kbd-badge">3</kbd> Filters</span>
+            <span><kbd class="kbd-badge">1</kbd> <kbd class="kbd-badge">2</kbd> <kbd class="kbd-badge">3</kbd> <kbd class="kbd-badge">4</kbd> Filters</span>
         </div>
     </footer>
 

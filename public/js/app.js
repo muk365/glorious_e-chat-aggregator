@@ -1,6 +1,7 @@
 /**
  * Glorious_E - Unified Combined Multi-Chat
  * Dynamic WebSocket & API client for Render.com & Localhost
+ * With Streamer Tag / Mention Highlight (@Glorious_E, @GloriousE, @glorious, Kick untagged)
  */
 
 (function() {
@@ -25,6 +26,8 @@
         bridgeConnected: false,
         autoScroll: true,
         unreadCount: 0,
+        mentionsOnly: false,
+        soundEnabled: true,
         filters: {
             kick: true,
             twitch: true,
@@ -33,7 +36,8 @@
         counts: {
             kick: 0,
             twitch: 0,
-            youtube: 0
+            youtube: 0,
+            mentions: 0
         },
         fontSize: 14,
         seenMessageIds: new Set(),
@@ -62,13 +66,16 @@
         filterKick: document.getElementById('filterKick'),
         filterTwitch: document.getElementById('filterTwitch'),
         filterYoutube: document.getElementById('filterYoutube'),
+        filterMentions: document.getElementById('filterMentions'),
         countKick: document.getElementById('countKick'),
         countTwitch: document.getElementById('countTwitch'),
         countYoutube: document.getElementById('countYoutube'),
+        countMentions: document.getElementById('countMentions'),
         
         // Tools
         btnClearChat: document.getElementById('btnClearChat'),
         btnToggleScroll: document.getElementById('btnToggleScroll'),
+        btnToggleSound: document.getElementById('btnToggleSound'),
         btnFontMinus: document.getElementById('btnFontMinus'),
         btnFontPlus: document.getElementById('btnFontPlus'),
         btnToggleVideo: document.getElementById('btnToggleVideo'),
@@ -89,6 +96,69 @@
         twitch: `<svg viewBox="0 0 24 24"><path d="M2.149 0l-1.612 4.119v16.804h5.331v3.077h3.201l3.198-3.077h4.802l6.932-6.928v-13.995h-21.851zm19.715 13.067l-3.734 3.731h-5.333l-3.2 3.077v-3.077h-3.731v-14.8h16v11.069z"/><path d="M17.884 5.334h-2.133v6.4h2.133v-6.4zm-5.334 0h-2.133v6.4h2.133v-6.4z"/></svg>`,
         youtube: `<svg viewBox="0 0 24 24"><path d="M23.498 6.186a3.016 3.016 0 0 0-2.122-2.136C19.505 3.545 12 3.545 12 3.545s-7.505 0-9.377.505A3.017 3.017 0 0 0 .502 6.186C0 8.07 0 12 0 12s0 3.93.502 5.814a3.016 3.016 0 0 0 2.122 2.136c1.871.505 9.376.505 9.376.505s7.505 0 9.377-.505a3.015 3.015 0 0 0 2.122-2.136C24 15.93 24 12 24 12s0-3.93-.502-5.814zM9.545 15.568V8.432L15.818 12l-6.273 3.568z"/></svg>`
     };
+
+    /**
+     * Intelligent detection of streamer mentions across Twitch, Kick, and YouTube:
+     * - Twitch: @Glorious_E, @glorious_e, @Glorious
+     * - YouTube: @GloriousE, @gloriouse
+     * - Kick: @Glorious_E (manual tag), or bare 'glorious_e', 'gloriouse' (since Kick lacks user autocomplete)
+     * - Direct address: "hey glorious", "yo glorious", "glorious, ...", "glorious: ..."
+     * - Protects against false positives (e.g. "what a glorious raid")
+     */
+    function isStreamerMentioned(text) {
+        if (!text) return false;
+        // 1. Direct @ mention with any handle variation: @Glorious_E, @GloriousE, @glorious
+        if (/@(?:glorious_e|gloriouse|glorious)\b/i.test(text)) return true;
+
+        // 2. Exact handle name with or without @ (glorious_e, gloriouse)
+        if (/\b(?:glorious_e|gloriouse)\b/i.test(text)) return true;
+
+        // 3. Direct addressing of streamer with greeting or punctuation
+        if (/\b(?:hey|yo|hi|hello|salut|coucou|gg|ggs|thanks|merci|ask|telling)\s+glorious\b/i.test(text)) return true;
+        if (/\bglorious\s*[:,?!~]/i.test(text)) return true;
+        if (/^\s*glorious\s+(?:did|do|can|are|is|will|have|what|how|why|when|where|who|you|u|bro|man|check|look|tell|pls|please)\b/i.test(text)) return true;
+
+        return false;
+    }
+
+    /**
+     * Subtle audio chime synthesizer via Web Audio API (zero external assets needed)
+     */
+    let audioCtx = null;
+    function playMentionChime() {
+        if (!state.soundEnabled) return;
+        try {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            const now = audioCtx.currentTime;
+            // 2-tone melodic chime: E5 (659Hz) -> A5 (880Hz)
+            const osc1 = audioCtx.createOscillator();
+            const gain1 = audioCtx.createGain();
+            osc1.type = 'sine';
+            osc1.frequency.setValueAtTime(659.25, now);
+            gain1.gain.setValueAtTime(0.12, now);
+            gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+            osc1.connect(gain1);
+            gain1.connect(audioCtx.destination);
+            osc1.start(now);
+            osc1.stop(now + 0.22);
+
+            const osc2 = audioCtx.createOscillator();
+            const gain2 = audioCtx.createGain();
+            osc2.type = 'sine';
+            osc2.frequency.setValueAtTime(880, now + 0.1);
+            gain2.gain.setValueAtTime(0.14, now + 0.1);
+            gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+            osc2.connect(gain2);
+            gain2.connect(audioCtx.destination);
+            osc2.start(now + 0.1);
+            osc2.stop(now + 0.4);
+        } catch (e) {}
+    }
 
     function showToast(msg, type = 'info') {
         if (!elements.toastContainer) return;
@@ -129,8 +199,16 @@
         // 1. Convert URLs first (BEFORE inserting any <img> tags, so img src is never corrupted)
         safe = safe.replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener noreferrer">$1</a>');
 
-        // 2. Highlight @mentions
-        safe = safe.replace(/(@[a-zA-Z0-9_\u00A0-\uFFFF]+)/g, '<span class="chat-mention">$1</span>');
+        // 2. Highlight @mentions (distinct gold styling for streamer tags)
+        safe = safe.replace(/(@[a-zA-Z0-9_\u00A0-\uFFFF]+)/g, (match) => {
+            if (/@(?:glorious_e|gloriouse|glorious)$/i.test(match)) {
+                return `<span class="chat-mention streamer-mention">${match}</span>`;
+            }
+            return `<span class="chat-mention">${match}</span>`;
+        });
+
+        // 2b. Highlight bare 'glorious_e' or 'gloriouse' in text if not already tagged (especially for Kick)
+        safe = safe.replace(/\b(glorious_e|gloriouse)\b(?![^<]*>)/gi, '<span class="chat-mention streamer-mention">@$1</span>');
 
         // 3. YouTube Emojis (__YTEMOTE__:url:label__)
         safe = safe.replace(/__YTEMOTE__:([^:]+):([^_]+)__/g, (m, url, label) => {
@@ -197,17 +275,29 @@
         }
 
         const platform = (msg.platform || 'twitch').toLowerCase();
+        const isSelf = /^(?:glorious_e|gloriouse|glorious)$/i.test(msg.username || '');
+        const isMentioned = !isSelf && isStreamerMentioned(msg.message);
         
-        // Increment count
+        // Increment counts
         if (state.counts[platform] !== undefined) {
             state.counts[platform]++;
-            updateFilterBadges();
         }
+        if (isMentioned) {
+            state.counts.mentions++;
+            playMentionChime();
+        }
+        updateFilterBadges();
 
         const row = document.createElement('div');
         row.className = `chat-message-row platform-${platform}`;
+        if (isMentioned) {
+            row.classList.add('streamer-highlight');
+        }
         if (!state.filters[platform]) {
             row.classList.add('hidden-by-filter');
+        }
+        if (state.mentionsOnly && !isMentioned) {
+            row.classList.add('hidden-by-mention-filter');
         }
 
         const timeStr = formatTime(msg.timestamp);
@@ -215,6 +305,11 @@
         const color = msg.color || (platform === 'kick' ? '#00e701' : platform === 'twitch' ? '#a970ff' : '#ff4d4d');
         const safeUser = escapeHtml(msg.username || 'User');
         const parsedText = parseMessageContent(msg.message, platform, msg.rawEmotes);
+
+        let mentionTagHtml = '';
+        if (isMentioned) {
+            mentionTagHtml = `<span class="streamer-mention-tag" title="Streamer mentioned">★ MENTION</span>`;
+        }
 
         let avatarHtml = '';
         if (msg.avatar) {
@@ -226,6 +321,7 @@
             <span class="platform-badge-pill ${platform}" title="${platform.toUpperCase()} Chat">
                 ${iconSvg}
             </span>
+            ${mentionTagHtml}
             ${avatarHtml}
             <div class="chat-content-wrap">
                 <span class="chat-author" style="color:${color}">${safeUser}</span>:
@@ -269,6 +365,7 @@
         if (elements.countKick) elements.countKick.textContent = state.counts.kick.toLocaleString();
         if (elements.countTwitch) elements.countTwitch.textContent = state.counts.twitch.toLocaleString();
         if (elements.countYoutube) elements.countYoutube.textContent = state.counts.youtube.toLocaleString();
+        if (elements.countMentions) elements.countMentions.textContent = state.counts.mentions.toLocaleString();
     }
 
     function applyFilters() {
@@ -278,11 +375,22 @@
             if (row.classList.contains('platform-twitch') && !state.filters.twitch) isVisible = false;
             if (row.classList.contains('platform-youtube') && !state.filters.youtube) isVisible = false;
             row.classList.toggle('hidden-by-filter', !isVisible);
+
+            // Filter mentions only
+            if (state.mentionsOnly && !row.classList.contains('streamer-highlight')) {
+                row.classList.add('hidden-by-mention-filter');
+            } else {
+                row.classList.remove('hidden-by-mention-filter');
+            }
         });
 
         elements.filterKick.classList.toggle('active', state.filters.kick);
         elements.filterTwitch.classList.toggle('active', state.filters.twitch);
         elements.filterYoutube.classList.toggle('active', state.filters.youtube);
+        if (elements.filterMentions) {
+            elements.filterMentions.classList.toggle('active', state.counts.mentions > 0 || state.mentionsOnly);
+            elements.filterMentions.classList.toggle('filtering-only', state.mentionsOnly);
+        }
     }
 
     /**
@@ -534,6 +642,15 @@
             applyFilters();
         });
 
+        // Mentions Filter Chip
+        if (elements.filterMentions) {
+            elements.filterMentions.addEventListener('click', () => {
+                state.mentionsOnly = !state.mentionsOnly;
+                applyFilters();
+                showToast(state.mentionsOnly ? 'Filtering: Showing only messages tagging Glorious_E' : 'Showing all messages', 'info');
+            });
+        }
+
         // Clear Chat
         elements.btnClearChat.addEventListener('click', () => {
             elements.chatFeed.innerHTML = '';
@@ -550,6 +667,25 @@
             if (state.autoScroll) scrollToBottom();
             showToast(`Auto-scroll ${state.autoScroll ? 'enabled' : 'paused'}`, 'info');
         });
+
+        // Audio chime toggle
+        if (elements.btnToggleSound) {
+            const savedSound = localStorage.getItem('mention_sound_enabled');
+            if (savedSound !== null) {
+                state.soundEnabled = savedSound === '1';
+                elements.btnToggleSound.textContent = state.soundEnabled ? '🔔 Chime: ON' : '🔕 Chime: OFF';
+                elements.btnToggleSound.classList.toggle('active', state.soundEnabled);
+            }
+
+            elements.btnToggleSound.addEventListener('click', () => {
+                state.soundEnabled = !state.soundEnabled;
+                try { localStorage.setItem('mention_sound_enabled', state.soundEnabled ? '1' : '0'); } catch(e) {}
+                elements.btnToggleSound.textContent = state.soundEnabled ? '🔔 Chime: ON' : '🔕 Chime: OFF';
+                elements.btnToggleSound.classList.toggle('active', state.soundEnabled);
+                if (state.soundEnabled) playMentionChime();
+                showToast(`Mention audio chime: ${state.soundEnabled ? 'ON' : 'OFF'}`, 'info');
+            });
+        }
 
         // Font Size Adjusters
         elements.btnFontMinus.addEventListener('click', () => {
@@ -614,6 +750,8 @@
                 elements.filterTwitch.click();
             } else if (e.key === '3') {
                 elements.filterYoutube.click();
+            } else if (e.key === '4') {
+                if (elements.filterMentions) elements.filterMentions.click();
             }
         });
     }
