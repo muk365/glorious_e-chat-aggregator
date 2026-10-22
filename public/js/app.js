@@ -175,9 +175,9 @@
      * Single-pass mention replacer prevents double @@ or nested spans.
      * Ignores bots for streamer highlight styling.
      */
-    function parseMessageContent(text, platform, rawEmotes, isBot = false) {
-        if (!text) return '';
-        let safe = escapeHtml(text);
+    function parseMessageContent(text, platform, rawEmotes, isBot = false, gifUrl = null) {
+        if (!text && !gifUrl) return '';
+        let safe = escapeHtml(text || '');
         
         // 1. Extract URLs into temporary placeholders so mentions, emojis, and emotes never touch URL text or hrefs
         const urls = [];
@@ -251,6 +251,16 @@
             safe = tokens.join('');
         }
 
+        // 6b. Twitch Animated GIFs (from Giphy via Twitch IRC tags)
+        if (gifUrl) {
+            const gifHtml = `<div class="chat-gif-wrap"><img src="${escapeHtml(gifUrl)}" class="chat-gif-img" alt="Twitch GIF" loading="lazy" onclick="window.open(this.src,'_blank')"></div>`;
+            if (/\[[^\]]+ GIF by [^\]]+\]/i.test(safe)) {
+                safe = safe.replace(/\[[^\]]+ GIF by [^\]]+\]/i, gifHtml);
+            } else {
+                safe += gifHtml;
+            }
+        }
+
         // 7. Restore URLs as proper clickable <a> links
         safe = safe.replace(/___URL_(\d+)___/g, (m, idx) => {
             const u = urls[parseInt(idx, 10)];
@@ -310,7 +320,7 @@
         const iconSvg = ICONS[platform] || ICONS.twitch;
         const color = msg.color || (platform === 'kick' ? '#00e701' : platform === 'twitch' ? '#a970ff' : '#ff4d4d');
         const safeUser = escapeHtml(msg.username || 'User');
-        const parsedText = parseMessageContent(msg.message, platform, msg.rawEmotes, isBot);
+        const parsedText = parseMessageContent(msg.message, platform, msg.rawEmotes, isBot, msg.gifUrl);
 
         let avatarHtml = '';
         if (msg.avatar) {

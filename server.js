@@ -303,11 +303,21 @@ function parseTwitchPrivmsg(raw) {
     
     const tags = {};
     rawTags.split(';').forEach(kv => {
-        const [k, v] = kv.split('=');
-        tags[k] = v;
+        const eqIdx = kv.indexOf('=');
+        if (eqIdx !== -1) {
+            tags[kv.substring(0, eqIdx)] = kv.substring(eqIdx + 1);
+        }
     });
     
     const isFirstMsg = tags['first-msg'] === '1' || tags['msg-id'] === 'first-msg';
+
+    let gifUrl = null;
+    if (tags['gifs']) {
+        const parts = tags['gifs'].split('|');
+        if (parts.length >= 3 && parts[2].startsWith('http')) {
+            gifUrl = parts.slice(2).join('|');
+        }
+    }
 
     addMessage({
         platform: 'twitch',
@@ -317,6 +327,7 @@ function parseTwitchPrivmsg(raw) {
         badges: tags['badges'] || '',
         rawEmotes: tags['emotes'] || '',
         firstMsg: isFirstMsg,
+        gifUrl: gifUrl,
         timestamp: Date.now()
     });
 }

@@ -799,6 +799,29 @@ a {
     z-index: 10;
 }
 
+/* Twitch Animated GIFs */
+.chat-gif-wrap {
+    display: block;
+    margin-top: 5px;
+    margin-bottom: 2px;
+}
+
+.chat-gif-img {
+    max-height: 135px;
+    max-width: 250px;
+    border-radius: 6px;
+    display: block;
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.45);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    cursor: pointer;
+    background: #000;
+}
+
+.chat-gif-img:hover {
+    transform: scale(1.03);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.7);
+}
+
 .chat-text a {
     color: var(--accent-blue);
     text-decoration: underline;
