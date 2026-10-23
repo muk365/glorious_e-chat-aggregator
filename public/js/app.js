@@ -954,6 +954,9 @@
         if (elements.filterMentions) {
             elements.filterMentions.addEventListener('click', () => {
                 state.mentionsOnly = !state.mentionsOnly;
+                if (state.mentionsOnly) {
+                    state.subsOnly = false;
+                }
                 applyFilters();
                 scrollToBottom();
                 showToast(state.mentionsOnly ? 'Filtering: Showing only messages tagging Glorious_E' : 'Showing all messages', 'info');
@@ -964,6 +967,9 @@
         if (elements.filterSubs) {
             elements.filterSubs.addEventListener('click', () => {
                 state.subsOnly = !state.subsOnly;
+                if (state.subsOnly) {
+                    state.mentionsOnly = false;
+                }
                 applyFilters();
                 scrollToBottom();
                 showToast(state.subsOnly ? 'Filtering: Showing only Subs, Gift Subs & Bits' : 'Showing all messages', 'info');
