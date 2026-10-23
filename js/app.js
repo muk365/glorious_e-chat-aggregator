@@ -351,7 +351,22 @@
         const iconSvg = ICONS[platform] || ICONS.twitch;
         const color = msg.color || (platform === 'kick' ? '#00e701' : platform === 'twitch' ? '#a970ff' : '#ff4d4d');
         const safeUser = escapeHtml(msg.username || 'User');
-        const parsedText = parseMessageContent(msg.message, platform, msg.rawEmotes, isBot, msg.gifUrl);
+
+        let messageText = msg.message || '';
+        let replyHtml = '';
+        if (msg.replyParent && msg.replyParent.displayName) {
+            const parentUser = escapeHtml(msg.replyParent.displayName);
+            const parentBody = escapeHtml(msg.replyParent.body || '');
+            replyHtml = `<div class="chat-reply-quote" title="Replying to @${parentUser}: ${parentBody}">↳ Répond à @${parentUser}${parentBody ? ` : <span class="reply-quote-body">${parentBody}</span>` : ''}</div>`;
+            
+            // Clean leading @parentUser from text since reply quote already shows who is being replied to
+            const parentLogin = (msg.replyParent.userLogin || '').replace(/[^a-zA-Z0-9_]/g, '');
+            const parentDisp = (msg.replyParent.displayName || '').replace(/[^a-zA-Z0-9_]/g, '');
+            const stripRegex = new RegExp(`^@(?:${parentLogin}|${parentDisp})\\s+`, 'i');
+            messageText = messageText.replace(stripRegex, '');
+        }
+
+        const parsedText = parseMessageContent(messageText, platform, msg.rawEmotes, isBot, msg.gifUrl);
 
         let avatarHtml = '';
         if (msg.avatar) {
@@ -375,6 +390,7 @@
             </span>
             ${avatarHtml}
             <div class="chat-content-wrap">
+                ${replyHtml}
                 ${firstMsgHtml}${subTagHtml}<span class="chat-author" style="color:${color}">${safeUser}</span>:
                 <span class="chat-text">${parsedText}</span>
             </div>

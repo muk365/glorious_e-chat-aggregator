@@ -703,6 +703,26 @@ a {
     vertical-align: middle;
 }
 
+/* THREADED REPLY QUOTE CONTEXT */
+.chat-reply-quote {
+    font-size: 11px;
+    color: #94a3b8;
+    margin-bottom: 3px;
+    padding-left: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+    opacity: 0.85;
+    user-select: none;
+    line-height: 1.3;
+}
+
+.chat-reply-quote .reply-quote-body {
+    color: #cbd5e1;
+    font-style: italic;
+}
+
 /* SUBS, GIFT SUBS, BITS & SUPPORT EVENTS (RED HIGHLIGHT) */
 .chat-message-row.sub-highlight {
     background: linear-gradient(90deg, rgba(239, 68, 68, 0.20) 0%, rgba(239, 68, 68, 0.04) 100%);

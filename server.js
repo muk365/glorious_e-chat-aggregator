@@ -60,6 +60,9 @@ const cache = {
     twitch: { data: null, expires: 0 }
 };
 
+// Track first-time chatters seen in this session to ensure replies or follow-up messages stay highlighted
+const sessionFirstChatters = new Set();
+
 // Prevent EPIPE crash if output stream closes
 process.stdout?.on('error', (err) => { if (err.code === 'EPIPE') return; });
 process.stderr?.on('error', (err) => { if (err.code === 'EPIPE') return; });
@@ -371,7 +374,47 @@ function parseTwitchPrivmsg(raw) {
         }
     });
     
-    const isFirstMsg = tags['first-msg'] === '1' || tags['msg-id'] === 'first-msg';
+    const isBot = isBotUser(username) || isBotUser(tags['display-name']);
+
+    const userLower = (username || '').toLowerCase();
+    const displayLower = (tags['display-name'] || '').toLowerCase();
+
+    // Check all possible Twitch tags/values for first-time chatters (including reply messages)
+    const fmVal = String(tags['first-msg'] || tags['first_msg'] || '').trim().toLowerCase();
+    const msgIdVal = String(tags['msg-id'] || '').trim().toLowerCase();
+    const ritualVal = String(tags['msg-param-ritual-name'] || '').trim().toLowerCase();
+
+    let isFirstMsg = fmVal === '1' || fmVal === 'true'
+        || msgIdVal === 'first-msg' || msgIdVal === 'first_msg'
+        || msgIdVal === 'user_intro' || msgIdVal === 'new_chatter'
+        || (msgIdVal === 'ritual' && ritualVal === 'new_chatter')
+        || (userLower && sessionFirstChatters.has(userLower))
+        || (displayLower && sessionFirstChatters.has(displayLower));
+
+    // Parse threaded reply parent information if available
+    let replyParent = null;
+    if (tags['reply-parent-msg-id']) {
+        let parentBody = (tags['reply-parent-msg-body'] || '')
+            .replace(/\\s/g, ' ')
+            .replace(/\\:/g, ':')
+            .replace(/\\;/g, ';')
+            .replace(/\\\\/g, '\\')
+            .replace(/\\r/g, '')
+            .replace(/\\n/g, ' ')
+            .trim();
+
+        replyParent = {
+            id: tags['reply-parent-msg-id'],
+            displayName: tags['reply-parent-display-name'] || tags['reply-parent-user-login'] || 'User',
+            userLogin: tags['reply-parent-user-login'] || '',
+            body: parentBody
+        };
+    }
+
+    if (!isBot && isFirstMsg) {
+        if (userLower) sessionFirstChatters.add(userLower);
+        if (displayLower) sessionFirstChatters.add(displayLower);
+    }
 
     let gifUrl = null;
     if (tags['gifs']) {
@@ -385,8 +428,6 @@ function parseTwitchPrivmsg(raw) {
     let isSubEvent = false;
     let subType = null;
     let subTag = null;
-
-    const isBot = isBotUser(username) || isBotUser(tags['display-name']);
 
     if (!isBot && tags['bits']) {
         const bitsVal = parseInt(tags['bits'], 10);
@@ -418,6 +459,7 @@ function parseTwitchPrivmsg(raw) {
         badges: tags['badges'] || '',
         rawEmotes: tags['emotes'] || '',
         firstMsg: !isBot && isFirstMsg,
+        replyParent: replyParent,
         gifUrl: gifUrl,
         subEvent: isSubEvent,
         subType: subType,
@@ -441,19 +483,48 @@ function parseTwitchUsernotice(raw) {
         }
     });
 
-    const msgId = tags['msg-id'] || 'sub';
+    const msgId = String(tags['msg-id'] || '').trim().toLowerCase();
+    const ritualName = String(tags['msg-param-ritual-name'] || '').trim().toLowerCase();
+
     let sysMsg = (tags['system-msg'] || '')
         .replace(/\\s/g, ' ')
         .replace(/\\:/g, ':')
         .replace(/\\;/g, ';')
         .replace(/\\\\/g, '\\')
+        .replace(/\\r/g, '')
+        .replace(/\\n/g, ' ')
         .replace(/\\'/g, "'");
 
     const username = tags['display-name'] || tags['login'] || 'TwitchUser';
     if (isBotUser(username) || isBotUser(tags['login']) || isBotUser(tags['display-name'])) {
-        return; // Exclude bots from subscription events
+        return; // Exclude bots from subscription and ritual events
     }
     const color = tags['color'] || '#9146ff';
+
+    // First-Time Chatter Ritual / Introduction (previously misclassified as sub event!)
+    const isRitualFirstChatter = (msgId === 'ritual' && ritualName === 'new_chatter')
+        || msgId === 'user_intro'
+        || msgId === 'first-msg'
+        || msgId === 'first_msg'
+        || ritualName === 'new_chatter';
+
+    if (isRitualFirstChatter) {
+        if (username) sessionFirstChatters.add(username.toLowerCase());
+        if (tags['login']) sessionFirstChatters.add(tags['login'].toLowerCase());
+
+        addMessage({
+            platform: 'twitch',
+            username: username,
+            color: color,
+            message: customMsg || sysMsg || `${username} is chatting for the first time!`,
+            badges: tags['badges'] || '',
+            rawEmotes: tags['emotes'] || '',
+            firstMsg: true,
+            subEvent: false,
+            timestamp: Date.now()
+        });
+        return;
+    }
 
     const isPrime = tags['msg-param-sub-plan'] === 'Prime';
     let tagLabel = isPrime ? '👑 Prime Sub' : '⭐ Sub';

@@ -23,6 +23,7 @@ let currentYtVideoId = STREAMER.defaultYtVideoId;
 let recentMessages = [];
 const MAX_HISTORY = 60;
 const clients = new Set();
+const sessionFirstChatters = new Set();
 
 function addMessage(msg) {
     if (!msg || !msg.message) return;
@@ -99,6 +100,8 @@ function initTwitch() {
                 
                 if (line.includes('PRIVMSG')) {
                     parseTwitchPrivmsg(line);
+                } else if (line.includes('USERNOTICE')) {
+                    parseTwitchUsernotice(line);
                 }
             }
         };
@@ -133,7 +136,46 @@ function parseTwitchPrivmsg(raw) {
     
     const displayName = tags['display-name'] || username;
     const color = tags['color'] || '#9146ff';
-    const isFirstMsg = tags['first-msg'] === '1' || tags['msg-id'] === 'first-msg';
+
+    const userLower = (username || '').toLowerCase();
+    const displayLower = (tags['display-name'] || '').toLowerCase();
+
+    // Check all possible Twitch tags/values for first-time chatters (including reply messages)
+    const fmVal = String(tags['first-msg'] || tags['first_msg'] || '').trim().toLowerCase();
+    const msgIdVal = String(tags['msg-id'] || '').trim().toLowerCase();
+    const ritualVal = String(tags['msg-param-ritual-name'] || '').trim().toLowerCase();
+
+    let isFirstMsg = fmVal === '1' || fmVal === 'true'
+        || msgIdVal === 'first-msg' || msgIdVal === 'first_msg'
+        || msgIdVal === 'user_intro' || msgIdVal === 'new_chatter'
+        || (msgIdVal === 'ritual' && ritualVal === 'new_chatter')
+        || (userLower && sessionFirstChatters.has(userLower))
+        || (displayLower && sessionFirstChatters.has(displayLower));
+
+    // Parse threaded reply parent information if available
+    let replyParent = null;
+    if (tags['reply-parent-msg-id']) {
+        let parentBody = (tags['reply-parent-msg-body'] || '')
+            .replace(/\\s/g, ' ')
+            .replace(/\\:/g, ':')
+            .replace(/\\;/g, ';')
+            .replace(/\\\\/g, '\\')
+            .replace(/\\r/g, '')
+            .replace(/\\n/g, ' ')
+            .trim();
+
+        replyParent = {
+            id: tags['reply-parent-msg-id'],
+            displayName: tags['reply-parent-display-name'] || tags['reply-parent-user-login'] || 'User',
+            userLogin: tags['reply-parent-user-login'] || '',
+            body: parentBody
+        };
+    }
+
+    if (isFirstMsg) {
+        if (userLower) sessionFirstChatters.add(userLower);
+        if (displayLower) sessionFirstChatters.add(displayLower);
+    }
 
     let gifUrl = null;
     if (tags['gifs']) {
@@ -151,9 +193,53 @@ function parseTwitchPrivmsg(raw) {
         badges: tags['badges'] || '',
         rawEmotes: tags['emotes'] || '',
         firstMsg: isFirstMsg,
+        replyParent: replyParent,
         gifUrl: gifUrl,
         timestamp: Date.now()
     });
+}
+
+function parseTwitchUsernotice(raw) {
+    const tagsMatch = raw.match(/^@([^ ]+) [^ ]+ USERNOTICE #[^ ]+(?:\s*:(.*))?$/);
+    if (!tagsMatch) return;
+    
+    const rawTags = tagsMatch[1];
+    const customMsg = tagsMatch[2] ? tagsMatch[2].trim() : '';
+    
+    const tags = {};
+    rawTags.split(';').forEach(kv => {
+        const eqIdx = kv.indexOf('=');
+        if (eqIdx !== -1) {
+            tags[kv.substring(0, eqIdx)] = kv.substring(eqIdx + 1);
+        }
+    });
+
+    const msgId = String(tags['msg-id'] || '').trim().toLowerCase();
+    const ritualName = String(tags['msg-param-ritual-name'] || '').trim().toLowerCase();
+    const username = tags['display-name'] || tags['login'] || 'TwitchUser';
+    const color = tags['color'] || '#9146ff';
+
+    const isRitualFirstChatter = (msgId === 'ritual' && ritualName === 'new_chatter')
+        || msgId === 'user_intro'
+        || msgId === 'first-msg'
+        || msgId === 'first_msg'
+        || ritualName === 'new_chatter';
+
+    if (isRitualFirstChatter) {
+        if (username) sessionFirstChatters.add(username.toLowerCase());
+        if (tags['login']) sessionFirstChatters.add(tags['login'].toLowerCase());
+
+        addMessage({
+            platform: 'twitch',
+            username: username,
+            color: color,
+            message: customMsg || `${username} is chatting for the first time!`,
+            badges: tags['badges'] || '',
+            rawEmotes: tags['emotes'] || '',
+            firstMsg: true,
+            timestamp: Date.now()
+        });
+    }
 }
 
 // ==========================================
