@@ -396,13 +396,18 @@ function parseTwitchUsernotice(raw) {
     const username = tags['display-name'] || tags['login'] || 'TwitchUser';
     const color = tags['color'] || '#9146ff';
 
-    let tagLabel = '⭐ Sub';
+    const isPrime = tags['msg-param-sub-plan'] === 'Prime';
+    let tagLabel = isPrime ? '👑 Prime Sub' : '⭐ Sub';
     let subType = 'sub';
 
     if (msgId === 'resub') {
         subType = 'resub';
         const months = tags['msg-param-cumulative-months'] || tags['msg-param-months'] || '';
-        tagLabel = months ? `⭐ Resub (${months} mo)` : '⭐ Resub';
+        if (isPrime) {
+            tagLabel = months ? `👑 Prime Resub (${months} mo)` : '👑 Prime Resub';
+        } else {
+            tagLabel = months ? `⭐ Resub (${months} mo)` : '⭐ Resub';
+        }
     } else if (msgId === 'subgift' || msgId === 'anonsubgift') {
         subType = 'giftsub';
         const recipient = tags['msg-param-recipient-display-name'] || tags['msg-param-recipient-user-name'];
