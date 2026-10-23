@@ -179,6 +179,43 @@
             <span class="jump-unread-badge" id="jumpUnreadBadge">0</span>
         </button>
 
+        <!-- Chat Input Bar for Twitch Chatting -->
+        <div class="chat-input-bar" id="chatInputBar">
+            <!-- State 1: Keys not set in Render -->
+            <div class="chat-input-unconfigured" id="chatInputUnconfigured" style="display:none;">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="#9146ff"><path d="M2.149 0l-1.612 4.119v16.804h5.331v3.077h3.201l3.198-3.077h4.802l6.932-6.928v-13.995h-21.851zm19.715 13.067l-3.734 3.731h-5.333l-3.2 3.077v-3.077h-3.731v-14.8h16v11.069z"/><path d="M17.884 5.334h-2.133v6.4h2.133v-6.4zm-5.334 0h-2.133v6.4h2.133v-6.4z"/></svg>
+                <span>Twitch Chat: Add <code>TWITCH_CLIENT_ID</code> &amp; <code>TWITCH_CLIENT_SECRET</code> to enable sending messages.</span>
+            </div>
+
+            <!-- State 2: Configured, but user not logged in -->
+            <div class="chat-input-login-prompt" id="chatInputLoginPrompt" style="display:none;">
+                <div class="prompt-text-group">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="#9146ff"><path d="M2.149 0l-1.612 4.119v16.804h5.331v3.077h3.201l3.198-3.077h4.802l6.932-6.928v-13.995h-21.851zm19.715 13.067l-3.734 3.731h-5.333l-3.2 3.077v-3.077h-3.731v-14.8h16v11.069z"/><path d="M17.884 5.334h-2.133v6.4h2.133v-6.4zm-5.334 0h-2.133v6.4h2.133v-6.4z"/></svg>
+                    <span>Connect your Twitch account to chat directly in <strong>#glorious_e</strong></span>
+                </div>
+                <a href="/auth/twitch" class="btn-twitch-login" title="Authorize with Twitch to chat directly from this window">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M2.149 0l-1.612 4.119v16.804h5.331v3.077h3.201l3.198-3.077h4.802l6.932-6.928v-13.995h-21.851zm19.715 13.067l-3.734 3.731h-5.333l-3.2 3.077v-3.077h-3.731v-14.8h16v11.069z"/><path d="M17.884 5.334h-2.133v6.4h2.133v-6.4zm-5.334 0h-2.133v6.4h2.133v-6.4z"/></svg>
+                    <span>Connect Twitch to Chat</span>
+                </a>
+            </div>
+
+            <!-- State 3: Authenticated -->
+            <form class="chat-message-form" id="chatMessageForm" style="display:none;">
+                <div class="user-chat-badge" id="userChatBadge" title="Connected Twitch Account">
+                    <img src="" alt="" class="user-chat-avatar" id="userChatAvatar">
+                    <span class="user-chat-name" id="userChatName"></span>
+                    <button type="button" class="btn-chat-logout" id="btnChatLogout" title="Disconnect Twitch Account">✕</button>
+                </div>
+                <div class="chat-input-wrapper">
+                    <input type="text" class="chat-input-field" id="chatInputField" placeholder="Send a message to Glorious_E's Twitch chat..." maxlength="500" autocomplete="off">
+                </div>
+                <button type="submit" class="btn-chat-send" id="btnChatSend" title="Send message to Twitch (Enter)">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                    <span>Send</span>
+                </button>
+            </form>
+        </div>
+
     </main>
 
     <!-- Bottom Footer -->

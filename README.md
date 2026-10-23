@@ -86,6 +86,32 @@ Puis ouvrez votre navigateur sur : **[http://localhost:8088](http://localhost:80
    - Bouton **Clear** (Raccourci <kbd>X</kbd> ou <kbd>Suppr</kbd>) pour vider l'écran sans interférer avec <kbd>Ctrl+C</kbd>.
    - Mode Plein écran / Théâtre (Raccourci <kbd>F</kbd>) pour masquer les barres d'outils.
    - Tiroir vidéo rétractable **Video Stream** : pour regarder la vidéo du stream (Twitch, Kick ou YouTube) au-dessus du chat.
+7. **Envoi direct de messages sur le chat Twitch de Glorious_E** :
+   - Barre de discussion dédiée en bas du flux.
+   - Connexion sécurisée officielle OAuth Twitch ("Connect Twitch to Chat").
+   - Vos messages sont envoyés instantanément dans le chat `#glorious_e` via l'API officielle Twitch Helix et apparaissent directement dans le flux unifié.
+
+---
+
+## 🔐 Configuration de l'Envoi Twitch (Optionnel)
+
+Si vous souhaitez activer l'envoi de messages Twitch depuis votre déploiement Render :
+
+1. Rendez-vous sur la console développeur Twitch : **[dev.twitch.tv/console/apps](https://dev.twitch.tv/console/apps)**
+2. Cliquez sur **Register Your Application**.
+   - **Name** : `Glorious E Chat Aggregator` (ou ce que vous voulez)
+   - **OAuth Redirect URLs** :
+     - Pour Render : `https://VOTRE-APP.onrender.com/auth/twitch/callback`
+     - Pour tester en local : `http://localhost:8088/auth/twitch/callback`
+   - **Category** : `Chat Bot` ou `Website Integration`
+3. Cliquez sur **Create**, puis ouvrez votre application et cliquez sur **New Secret**.
+4. Copiez votre **Client ID** et votre **Client Secret**.
+5. Dans votre tableau de bord **Render.com** > votre service `glorious-e-chat` > onglet **Environment** :
+   - Ajoutez la variable `TWITCH_CLIENT_ID` avec votre Client ID.
+   - Ajoutez la variable `TWITCH_CLIENT_SECRET` avec votre Client Secret.
+   - Cliquez sur **Save Changes**. Render redémarre automatiquement avec l'envoi Twitch activé !
+
+*(Note : Sans ces clés, l'application reste 100% opérationnelle en mode lecture agrégée sans aucune erreur).*
 
 ---
 
@@ -97,9 +123,10 @@ Puis ouvrez votre navigateur sur : **[http://localhost:8088](http://localhost:80
   - Client WebSocket Kick Centrifugo (`wss://ws-chat.kick.cx/connection/websocket`) avec jeton d'authentification temps réel.
   - Poller YouTube Live Chat via InnerTube API.
   - Serveur WebSocket bidirectionnel pour streamer les messages combinés vers les navigateurs clients.
+  - Flux OAuth Twitch & endpoints Helix Chat (`/auth/twitch`, `/auth/twitch/callback`, `/api/user`, `/api/chat/send`, `/api/chat/logout`).
   - Endpoints REST : `/api/youtube`, `/api/7tv_emotes`, `/api/history`, `/api/status_all`, `/health`.
 - **[`public/js/app.js`](file:///d:/XAMPP/htdocs/chat-aggregator-baba/public/js/app.js)** : Client frontend dynamique.
   - Détecte automatiquement l'environnement (`ws://` en local ou `wss://` sur Render HTTPS).
   - Cache local des émotes 7TV pour un rendu instantané.
-  - Gestion des filtres, du défilement et des raccourcis clavier.
+  - Gestion des filtres, du défilement, des raccourcis clavier et de l'envoi de messages Twitch.
 - **[`render.yaml`](file:///d:/XAMPP/htdocs/chat-aggregator-baba/render.yaml)** : Fichier Blueprint de déploiement automatique pour Render.com.

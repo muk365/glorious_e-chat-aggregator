@@ -59,7 +59,10 @@
         seenMessageIds: new Set(),
         videoDrawerOpen: false,
         activeVideoPlayer: 'twitch',
-        isTheater: false
+        isTheater: false,
+        user: null,
+        isAuthConfigured: false,
+        isSendingMessage: false
     };
 
     // DOM Elements
@@ -101,6 +104,18 @@
         videoDrawer: document.getElementById('videoDrawer'),
         videoFrame: document.getElementById('videoFrame'),
         playerTabBtns: document.querySelectorAll('.player-tab-btn'),
+        
+        // Twitch Chat Input Bar
+        chatInputBar: document.getElementById('chatInputBar'),
+        chatInputUnconfigured: document.getElementById('chatInputUnconfigured'),
+        chatInputLoginPrompt: document.getElementById('chatInputLoginPrompt'),
+        chatMessageForm: document.getElementById('chatMessageForm'),
+        userChatBadge: document.getElementById('userChatBadge'),
+        userChatAvatar: document.getElementById('userChatAvatar'),
+        userChatName: document.getElementById('userChatName'),
+        btnChatLogout: document.getElementById('btnChatLogout'),
+        chatInputField: document.getElementById('chatInputField'),
+        btnChatSend: document.getElementById('btnChatSend'),
         
         toastContainer: document.getElementById('toastContainer')
     };
@@ -624,6 +639,134 @@
     }
 
     /**
+     * Twitch User Auth & Direct Chat Sending
+     */
+    async function checkUserAuth() {
+        try {
+            const res = await fetch('/api/user', { credentials: 'same-origin' });
+            if (!res.ok) return;
+            const data = await res.json();
+            
+            state.isAuthConfigured = !!data.configured;
+            state.user = (data.authenticated && data.user) ? data.user : null;
+            
+            renderAuthUI();
+        } catch (e) {
+            console.warn('[Auth] Check failed', e);
+        }
+    }
+
+    function renderAuthUI() {
+        if (!elements.chatInputBar) return;
+        
+        // State 1: Keys not configured on server
+        if (!state.isAuthConfigured) {
+            if (elements.chatInputUnconfigured) elements.chatInputUnconfigured.style.display = 'flex';
+            if (elements.chatInputLoginPrompt) elements.chatInputLoginPrompt.style.display = 'none';
+            if (elements.chatMessageForm) elements.chatMessageForm.style.display = 'none';
+            return;
+        }
+
+        if (elements.chatInputUnconfigured) elements.chatInputUnconfigured.style.display = 'none';
+
+        // State 2: Configured, but user not logged in
+        if (!state.user) {
+            if (elements.chatInputLoginPrompt) elements.chatInputLoginPrompt.style.display = 'flex';
+            if (elements.chatMessageForm) elements.chatMessageForm.style.display = 'none';
+            return;
+        }
+
+        // State 3: User logged in
+        if (elements.chatInputLoginPrompt) elements.chatInputLoginPrompt.style.display = 'none';
+        if (elements.chatMessageForm) {
+            elements.chatMessageForm.style.display = 'flex';
+            if (elements.userChatAvatar) {
+                elements.userChatAvatar.src = state.user.avatar || 'https://static-cdn.jtvnw.net/jtv_user_pictures/d4d79c6d-e57c-487d-912d-e13e85d1a7bf-profile_image-70x70.png';
+            }
+            if (elements.userChatName) {
+                elements.userChatName.textContent = state.user.displayName || state.user.login;
+            }
+            if (elements.chatInputField) {
+                elements.chatInputField.placeholder = `Chat as ${state.user.displayName || state.user.login}...`;
+            }
+        }
+    }
+
+    async function sendTwitchChatMessage(text) {
+        if (state.isSendingMessage) return;
+        const msg = (text || '').trim();
+        if (!msg) return;
+
+        state.isSendingMessage = true;
+        if (elements.btnChatSend) {
+            elements.btnChatSend.disabled = true;
+            elements.btnChatSend.innerHTML = '<span>Sending...</span>';
+        }
+
+        try {
+            const res = await fetch('/api/chat/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({ message: msg })
+            });
+            const data = await res.json();
+
+            if (res.ok && data.success) {
+                if (elements.chatInputField) {
+                    elements.chatInputField.value = '';
+                    elements.chatInputField.focus();
+                }
+                scrollToBottom();
+            } else {
+                showToast(data.error || 'Failed to send message to Twitch.', 'error');
+            }
+        } catch (err) {
+            console.error('[Chat Send] Error:', err);
+            showToast('Network error sending message.', 'error');
+        } finally {
+            state.isSendingMessage = false;
+            if (elements.btnChatSend) {
+                elements.btnChatSend.disabled = false;
+                elements.btnChatSend.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg><span>Send</span>';
+            }
+        }
+    }
+
+    async function logoutTwitchUser() {
+        try {
+            const res = await fetch('/api/chat/logout', { method: 'POST', credentials: 'same-origin' });
+            if (res.ok) {
+                state.user = null;
+                renderAuthUI();
+                showToast('Twitch account disconnected.', 'info');
+            }
+        } catch (e) {
+            console.error('[Auth Logout] Error:', e);
+        }
+    }
+
+    function checkAuthQueryParams() {
+        try {
+            const params = new URLSearchParams(window.location.search);
+            if (params.has('connected')) {
+                showToast('Connected with Twitch! You can now send messages.', 'success');
+                params.delete('connected');
+                const newQuery = params.toString();
+                const newUrl = window.location.pathname + (newQuery ? '?' + newQuery : '') + window.location.hash;
+                window.history.replaceState({}, document.title, newUrl);
+            } else if (params.has('auth_error')) {
+                const err = params.get('auth_error');
+                showToast(`Twitch Login: ${err}`, 'error');
+                params.delete('auth_error');
+                const newQuery = params.toString();
+                const newUrl = window.location.pathname + (newQuery ? '?' + newQuery : '') + window.location.hash;
+                window.history.replaceState({}, document.title, newUrl);
+            }
+        } catch (e) {}
+    }
+
+    /**
      * Event Listeners
      */
     function setupEvents() {
@@ -718,6 +861,24 @@
             }
         });
 
+        // Twitch Chat Message Send Form
+        if (elements.chatMessageForm) {
+            elements.chatMessageForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                if (elements.chatInputField) {
+                    sendTwitchChatMessage(elements.chatInputField.value);
+                }
+            });
+        }
+
+        // Twitch Account Logout
+        if (elements.btnChatLogout) {
+            elements.btnChatLogout.addEventListener('click', (e) => {
+                e.stopPropagation();
+                logoutTwitchUser();
+            });
+        }
+
         // Toggle Video Drawer
         elements.btnToggleVideo.addEventListener('click', toggleVideoDrawer);
         elements.playerTabBtns.forEach(btn => {
@@ -774,13 +935,17 @@
 
         setupEvents();
 
-        // 1. Load 7TV Emotes
+        // 1. Check Twitch OAuth query parameters & user session
+        checkAuthQueryParams();
+        checkUserAuth();
+
+        // 2. Load 7TV Emotes
         load7TvEmotes();
 
-        // 2. Connect to the WebSocket server
+        // 3. Connect to the WebSocket server
         connectBridge();
 
-        // 3. Auto-detect today's YouTube stream
+        // 4. Auto-detect today's YouTube stream
         autoDetectYouTubeLive(false);
     }
 

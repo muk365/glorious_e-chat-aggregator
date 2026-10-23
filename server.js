@@ -19,6 +19,14 @@ const STREAMER = {
     defaultYtVideoId: 'hjuUwbPqkG8'
 };
 
+// Twitch OAuth Credentials (configured in Render.com environment)
+const TWITCH_CLIENT_ID = process.env.TWITCH_CLIENT_ID || '';
+const TWITCH_CLIENT_SECRET = process.env.TWITCH_CLIENT_SECRET || '';
+
+// User OAuth sessions & CSRF state maps
+const userSessions = new Map(); // sessionId -> { sessionId, accessToken, refreshToken, expiresAt, user: { id, login, displayName, avatar } }
+const oauthStates = new Map();  // stateToken -> timestamp
+
 // Global state
 let currentYtVideoId = STREAMER.defaultYtVideoId;
 let currentYtTitle = 'Live Stream';
@@ -533,6 +541,78 @@ const MIME_TYPES = {
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
 
+// Cookie & Auth Helpers
+function parseCookies(req) {
+    const list = {};
+    const rc = req.headers.cookie;
+    if (!rc) return list;
+    rc.split(';').forEach(cookie => {
+        const parts = cookie.split('=');
+        const key = parts.shift().trim();
+        const val = decodeURIComponent(parts.join('=') || '');
+        if (key) list[key] = val;
+    });
+    return list;
+}
+
+function readJsonBody(req) {
+    return new Promise((resolve, reject) => {
+        let data = '';
+        req.on('data', chunk => {
+            data += chunk;
+            if (data.length > 1e6) { // 1MB protection
+                req.destroy();
+                reject(new Error('Payload too large'));
+            }
+        });
+        req.on('end', () => {
+            if (!data.trim()) return resolve({});
+            try {
+                resolve(JSON.parse(data));
+            } catch (err) {
+                reject(err);
+            }
+        });
+        req.on('error', reject);
+    });
+}
+
+function getTwitchRedirectUri(req) {
+    if (process.env.TWITCH_REDIRECT_URI) {
+        return process.env.TWITCH_REDIRECT_URI;
+    }
+    const proto = req.headers['x-forwarded-proto'] || (req.socket.encrypted ? 'https' : 'http');
+    const host = req.headers['x-forwarded-host'] || req.headers.host;
+    return `${proto}://${host}/auth/twitch/callback`;
+}
+
+async function refreshTwitchUserToken(session) {
+    if (!session || !session.refreshToken || !TWITCH_CLIENT_ID || !TWITCH_CLIENT_SECRET) return false;
+    try {
+        const params = new URLSearchParams({
+            client_id: TWITCH_CLIENT_ID,
+            client_secret: TWITCH_CLIENT_SECRET,
+            grant_type: 'refresh_token',
+            refresh_token: session.refreshToken
+        });
+        const res = await fetch('https://id.twitch.tv/oauth2/token', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: params.toString()
+        });
+        const data = await res.json();
+        if (data.access_token) {
+            session.accessToken = data.access_token;
+            if (data.refresh_token) session.refreshToken = data.refresh_token;
+            session.expiresAt = Date.now() + ((data.expires_in || 3600) * 1000);
+            return true;
+        }
+    } catch (e) {
+        console.error('[Twitch Auth] Refresh token failed:', e);
+    }
+    return false;
+}
+
 const server = http.createServer(async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -644,6 +724,262 @@ const server = http.createServer(async (req, res) => {
             res.end(JSON.stringify({ running: true, port: PORT }));
             return;
         }
+    }
+
+    // ==========================================
+    // TWITCH OAUTH & HELIX CHAT ROUTES
+    // ==========================================
+    
+    // Auth: Initiate Twitch OAuth
+    if (pathname === '/auth/twitch') {
+        if (!TWITCH_CLIENT_ID || !TWITCH_CLIENT_SECRET) {
+            res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end('<h3>Twitch Chat is not configured</h3><p>Please configure <code>TWITCH_CLIENT_ID</code> and <code>TWITCH_CLIENT_SECRET</code> in your Render environment variables.</p><p><a href="/">Back to Chat</a></p>');
+            return;
+        }
+        
+        const stateToken = crypto.randomBytes(16).toString('hex');
+        oauthStates.set(stateToken, Date.now() + 600000); // 10 min TTL
+        
+        const redirectUri = getTwitchRedirectUri(req);
+        const authUrl = `https://id.twitch.tv/oauth2/authorize?client_id=${encodeURIComponent(TWITCH_CLIENT_ID)}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent('user:write:chat user:read:chat')}&state=${stateToken}&force_verify=true`;
+        
+        res.writeHead(302, { 'Location': authUrl });
+        res.end();
+        return;
+    }
+
+    // Auth: Twitch OAuth Callback
+    if (pathname === '/auth/twitch/callback') {
+        if (url.searchParams.get('error')) {
+            const err = url.searchParams.get('error_description') || url.searchParams.get('error') || 'Twitch authorization denied';
+            res.writeHead(302, { 'Location': '/?auth_error=' + encodeURIComponent(err) });
+            res.end();
+            return;
+        }
+
+        const code = url.searchParams.get('code');
+        if (!code) {
+            res.writeHead(302, { 'Location': '/?auth_error=Missing+authorization+code' });
+            res.end();
+            return;
+        }
+
+        const redirectUri = getTwitchRedirectUri(req);
+        try {
+            const tokenRes = await fetch('https://id.twitch.tv/oauth2/token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
+                    client_id: TWITCH_CLIENT_ID,
+                    client_secret: TWITCH_CLIENT_SECRET,
+                    code: code,
+                    grant_type: 'authorization_code',
+                    redirect_uri: redirectUri
+                }).toString()
+            });
+
+            const tokenData = await tokenRes.json();
+            if (!tokenRes.ok || !tokenData.access_token) {
+                const errMsg = tokenData.message || 'Token exchange failed';
+                res.writeHead(302, { 'Location': '/?auth_error=' + encodeURIComponent(errMsg) });
+                res.end();
+                return;
+            }
+
+            // Fetch user profile from Helix
+            const userRes = await fetch('https://api.twitch.tv/helix/users', {
+                headers: {
+                    'Authorization': `Bearer ${tokenData.access_token}`,
+                    'Client-Id': TWITCH_CLIENT_ID
+                }
+            });
+            const userData = await userRes.json();
+            const user = userData.data?.[0];
+            if (!user) {
+                res.writeHead(302, { 'Location': '/?auth_error=Failed+to+fetch+Twitch+profile' });
+                res.end();
+                return;
+            }
+
+            const sessionId = crypto.randomBytes(32).toString('hex');
+            userSessions.set(sessionId, {
+                sessionId,
+                accessToken: tokenData.access_token,
+                refreshToken: tokenData.refresh_token,
+                expiresAt: Date.now() + ((tokenData.expires_in || 3600) * 1000),
+                user: {
+                    id: user.id,
+                    login: user.login,
+                    displayName: user.display_name,
+                    avatar: user.profile_image_url
+                }
+            });
+
+            const isHttps = (req.headers['x-forwarded-proto'] === 'https') || req.socket.encrypted;
+            const cookieVal = `twitch_session=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000${isHttps ? '; Secure' : ''}`;
+            res.writeHead(302, {
+                'Set-Cookie': cookieVal,
+                'Location': '/?connected=twitch'
+            });
+            res.end();
+            return;
+        } catch (err) {
+            console.error('[Twitch OAuth Callback] Error:', err);
+            res.writeHead(302, { 'Location': '/?auth_error=Authentication+server+error' });
+            res.end();
+            return;
+        }
+    }
+
+    // API: Current Authenticated User & App Config Status
+    if (pathname === '/api/user') {
+        const isConfigured = Boolean(TWITCH_CLIENT_ID && TWITCH_CLIENT_SECRET);
+        if (!isConfigured) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ configured: false, authenticated: false }));
+            return;
+        }
+
+        const cookies = parseCookies(req);
+        const sessionId = cookies.twitch_session;
+        let session = sessionId ? userSessions.get(sessionId) : null;
+
+        if (session && session.user) {
+            if (session.expiresAt && session.expiresAt < Date.now() + 60000) {
+                await refreshTwitchUserToken(session);
+            }
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                configured: true,
+                authenticated: true,
+                user: session.user
+            }));
+            return;
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+            configured: true,
+            authenticated: false
+        }));
+        return;
+    }
+
+    // API: Send Message to Twitch Chat (#glorious_e)
+    if (pathname === '/api/chat/send') {
+        if (req.method !== 'POST') {
+            res.writeHead(405, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'Method Not Allowed' }));
+            return;
+        }
+
+        const cookies = parseCookies(req);
+        const sessionId = cookies.twitch_session;
+        let session = sessionId ? userSessions.get(sessionId) : null;
+
+        if (!session || !session.user) {
+            res.writeHead(401, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'You must connect your Twitch account to send messages.' }));
+            return;
+        }
+
+        let body;
+        try {
+            body = await readJsonBody(req);
+        } catch (e) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'Invalid JSON request payload.' }));
+            return;
+        }
+
+        const messageText = (body.message || '').trim();
+        if (!messageText) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'Message cannot be empty.' }));
+            return;
+        }
+        if (messageText.length > 500) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'Message cannot exceed 500 characters.' }));
+            return;
+        }
+
+        if (session.expiresAt && session.expiresAt < Date.now() + 60000) {
+            await refreshTwitchUserToken(session);
+        }
+
+        try {
+            const sendRes = await fetch('https://api.twitch.tv/helix/chat/messages', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${session.accessToken}`,
+                    'Client-Id': TWITCH_CLIENT_ID,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    broadcaster_id: STREAMER.twitchUserId, // '63304572'
+                    sender_id: session.user.id,
+                    message: messageText
+                })
+            });
+
+            const sendData = await sendRes.json();
+
+            if (sendRes.ok && sendData.data?.[0]) {
+                const msgResult = sendData.data[0];
+                if (msgResult.is_sent) {
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({
+                        success: true,
+                        messageId: msgResult.message_id,
+                        user: session.user
+                    }));
+                    return;
+                } else {
+                    const reason = msgResult.drop_reason?.message || msgResult.drop_reason?.code || 'Message was dropped by Twitch channel rules.';
+                    res.writeHead(200, { 'Content-Type': 'application/json' });
+                    res.end(JSON.stringify({ success: false, error: reason }));
+                    return;
+                }
+            }
+
+            const errMsg = sendData.message || (sendData.error ? `${sendData.error}: ${sendData.message || ''}` : 'Failed to send Twitch message.');
+            const statusCode = (sendRes.status >= 400 && sendRes.status < 500) ? sendRes.status : 400;
+            res.writeHead(statusCode, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: errMsg }));
+            return;
+        } catch (err) {
+            console.error('[Twitch Chat Send] Error:', err);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: 'Network error sending Twitch message.' }));
+            return;
+        }
+    }
+
+    // API & Route: Logout / Disconnect Twitch Account
+    if (pathname === '/api/chat/logout' || pathname === '/auth/logout') {
+        const cookies = parseCookies(req);
+        if (cookies.twitch_session) {
+            userSessions.delete(cookies.twitch_session);
+        }
+        const isHttps = (req.headers['x-forwarded-proto'] === 'https') || req.socket.encrypted;
+        const cookieVal = `twitch_session=; Path=/; HttpOnly; SameSite=Lax; Expires=Thu, 01 Jan 1970 00:00:00 GMT${isHttps ? '; Secure' : ''}`;
+        
+        if (req.method === 'POST') {
+            res.writeHead(200, {
+                'Set-Cookie': cookieVal,
+                'Content-Type': 'application/json'
+            });
+            res.end(JSON.stringify({ success: true }));
+        } else {
+            res.writeHead(302, {
+                'Set-Cookie': cookieVal,
+                'Location': '/'
+            });
+            res.end();
+        }
+        return;
     }
     
     // Static File Serving
