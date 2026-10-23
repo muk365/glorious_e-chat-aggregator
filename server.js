@@ -20,6 +20,8 @@ const STREAMER = {
     defaultYtVideoId: 'y2I6AtvDqyk'
 };
 
+let ytApiKey = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
+
 // Automated bot users to ignore for all highlights
 const IGNORED_BOT_USERS = new Set([
     'nightbot',
@@ -157,106 +159,148 @@ async function getYouTubeLiveStatus(force = false) {
         let title = 'Live Stream';
         let isLive = false;
 
-        const endpoints = [
-            `https://www.youtube.com/${STREAMER.youtubeHandle}/live?ucbcb=1`,
-            `https://www.youtube.com/channel/${STREAMER.youtubeChannelId}/live?ucbcb=1`,
-            `https://www.youtube.com/${STREAMER.youtubeHandle}/streams?ucbcb=1`,
-            `https://www.youtube.com/channel/${STREAMER.youtubeChannelId}/streams?ucbcb=1`
-        ];
+        // Method 1: YouTube Innertube Browse API (targeted directly at Glorious_E's streams tab)
+        // This is a direct JSON API that is never redirected to the YouTube homepage!
+        try {
+            const innerRes = await fetch(`https://www.youtube.com/youtubei/v1/browse?key=${ytApiKey}`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+                },
+                body: JSON.stringify({
+                    context: {
+                        client: {
+                            clientName: 'WEB',
+                            clientVersion: '2.20240410.01.00'
+                        }
+                    },
+                    browseId: STREAMER.youtubeChannelId,
+                    params: 'EgdzdHJlYW1z8gYECgJ6AA%3D%3D'
+                })
+            });
 
-        const reqHeaders = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Cookie': 'SOCS=CAESEwgDEgk2OTQ0MjAyNjEaAmVuIAEaBgiA_LyaBg; CONSENT=PENDING+999; YES=1'
-        };
-
-        for (const ep of endpoints) {
-            try {
-                const res = await fetch(ep, {
-                    headers: reqHeaders,
-                    redirect: 'follow'
-                });
-                const html = await res.text();
-
-                // 1. Canonical tag pointing to watch?v=
-                const canonMatch = html.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})"/);
-                if (canonMatch) {
-                    videoId = canonMatch[1];
+            if (innerRes.ok) {
+                const innerData = await innerRes.json();
+                const innerStr = JSON.stringify(innerData);
+                
+                // Match the LIVE badge targetId on Glorious_E's streams tab
+                const liveBadgeMatch = innerStr.match(/"text":"LIVE"[^}]+?"animationActivationTargetId":"([a-zA-Z0-9_-]{11})"/);
+                if (liveBadgeMatch) {
+                    videoId = liveBadgeMatch[1];
+                    isLive = true;
                 }
+            }
+        } catch (innerErr) {
+            console.warn('[YouTube Live] Innertube browse failed:', innerErr.message);
+        }
 
-                // 2. OpenGraph / Twitter meta tags
-                if (!videoId) {
-                    const ogMatch = html.match(/<meta property="og:url" content="https:\/\/www\.youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})"/);
-                    if (ogMatch) videoId = ogMatch[1];
-                }
-                if (!videoId) {
-                    const ogVidMatch = html.match(/<meta property="og:video:url" content="https:\/\/www\.youtube\.com\/embed\/([a-zA-Z0-9_-]{11})"/);
-                    if (ogVidMatch) videoId = ogVidMatch[1];
-                }
+        // Method 2: Direct channel /live and /streams scraping (only if Method 1 did not find video)
+        if (!videoId) {
+            const endpoints = [
+                `https://www.youtube.com/${STREAMER.youtubeHandle}/live?ucbcb=1`,
+                `https://www.youtube.com/channel/${STREAMER.youtubeChannelId}/live?ucbcb=1`,
+                `https://www.youtube.com/${STREAMER.youtubeHandle}/streams?ucbcb=1`,
+                `https://www.youtube.com/channel/${STREAMER.youtubeChannelId}/streams?ucbcb=1`
+            ];
 
-                // 3. Streams tab / rich grid LIVE badge
-                if (!videoId) {
-                    const liveBadgeMatch = html.match(/"text":"LIVE"[^}]+?"animationActivationTargetId":"([a-zA-Z0-9_-]{11})"/);
-                    if (liveBadgeMatch) videoId = liveBadgeMatch[1];
-                }
-                if (!videoId) {
-                    const liveThumbMatch = html.match(/https:\/\/i\.ytimg\.com\/vi\/([a-zA-Z0-9_-]{11})\/[^"]+[\s\S]{1,500}?"text":"LIVE"/);
-                    if (liveThumbMatch) videoId = liveThumbMatch[1];
-                }
+            const reqHeaders = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Cookie': 'SOCS=CAESEwgDEgk2OTQ0MjAyNjEaAmVuIAEaBgiA_LyaBg; CONSENT=PENDING+999; YES=1'
+            };
 
-                // Check title in html
-                const titleMatch = html.match(/<meta property="og:title" content="(.*?)"/) ||
-                                   html.match(/<title>(.*?) - YouTube<\/title>/);
-                if (titleMatch && titleMatch[1]) {
-                    title = titleMatch[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
-                }
+            for (const ep of endpoints) {
+                try {
+                    const res = await fetch(ep, {
+                        headers: reqHeaders,
+                        redirect: 'follow'
+                    });
 
-                // Check live status
-                const hasLiveTag = html.includes('"isLive":true') ||
-                                   html.includes('"isLiveNow":true') ||
-                                   html.includes('"isLiveContent":true') ||
-                                   html.includes('"text":"LIVE"') ||
-                                   html.includes('THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE') ||
-                                   html.includes('BADGE_STYLE_TYPE_LIVE_NOW');
+                    // Reject any request that was redirected to the generic YouTube homepage or consent interstitial!
+                    if (res.url.endsWith('youtube.com/') || res.url.includes('consent.youtube.com')) {
+                        continue;
+                    }
 
-                if (videoId) {
-                    isLive = hasLiveTag;
-                    break; // Successfully detected live video
+                    const html = await res.text();
+
+                    // Canonical tag pointing to watch?v=
+                    const canonMatch = html.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})"/);
+                    if (canonMatch) {
+                        videoId = canonMatch[1];
+                    }
+
+                    // OpenGraph / Twitter meta tags
+                    if (!videoId) {
+                        const ogMatch = html.match(/<meta property="og:url" content="https:\/\/www\.youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})"/);
+                        if (ogMatch) videoId = ogMatch[1];
+                    }
+
+                    // Streams tab LIVE badge
+                    if (!videoId) {
+                        const liveBadgeMatch = html.match(/"text":"LIVE"[^}]+?"animationActivationTargetId":"([a-zA-Z0-9_-]{11})"/);
+                        if (liveBadgeMatch) videoId = liveBadgeMatch[1];
+                    }
+
+                    const hasLiveTag = html.includes('"isLive":true') ||
+                                       html.includes('"isLiveNow":true') ||
+                                       html.includes('"isLiveContent":true') ||
+                                       html.includes('"text":"LIVE"') ||
+                                       html.includes('THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE') ||
+                                       html.includes('BADGE_STYLE_TYPE_LIVE_NOW');
+
+                    if (videoId) {
+                        isLive = hasLiveTag;
+                        break;
+                    }
+                } catch (epErr) {
+                    console.warn(`[YouTube Live] Endpoint ${ep} failed:`, epErr.message);
                 }
-            } catch (epErr) {
-                console.warn(`[YouTube Live] Endpoint ${ep} failed:`, epErr.message);
             }
         }
 
-        // Fetch clean title via oEmbed if videoId was found
+        // MANDATORY VALIDATION: Verify candidate video strictly belongs to Glorious_E via oEmbed
         if (videoId) {
             try {
                 const oembedRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`);
                 if (oembedRes.ok) {
                     const oembedData = await oembedRes.json();
-                    if (oembedData && oembedData.title) {
-                        title = oembedData.title;
+                    const author = String(oembedData.author_name || '').toLowerCase();
+                    const authorUrl = String(oembedData.author_url || '').toLowerCase();
+                    const isGlorious = author.includes('glorious') || authorUrl.includes('gloriouse');
+
+                    if (isGlorious) {
+                        title = oembedData.title || title;
+                    } else {
+                        console.warn(`[YouTube Live] Rejected video ${videoId} because author "${oembedData.author_name}" does not match Glorious_E`);
+                        videoId = null;
+                        isLive = false;
                     }
                 }
-            } catch (_) {}
+            } catch (oErr) {
+                console.warn('[YouTube Live] oEmbed validation warning:', oErr.message);
+            }
+        }
 
+        if (videoId && isLive) {
             const changed = (videoId !== currentYtVideoId);
             currentYtVideoId = videoId;
             currentYtTitle = title;
-            currentYtIsLive = isLive;
+            currentYtIsLive = true;
             if (changed) {
                 ytContinuation = null;
                 pollYouTubeChat();
             }
         } else {
-            // Keep current videoId or fallback to default
+            // Keep default/current video if live is not detected
             videoId = currentYtVideoId || STREAMER.defaultYtVideoId;
+            isLive = false;
         }
 
         const result = {
             success: true,
             channel: STREAMER.youtubeHandle,
-            videoId: videoId,
+            videoId: currentYtVideoId,
             title: currentYtTitle,
             isLive: currentYtIsLive,
             checkedAt: new Date().toISOString()
@@ -838,7 +882,6 @@ function parseKickPush(payload) {
 
 // YouTube Poller
 let ytContinuation = null;
-let ytApiKey = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
 let ytPollTimer = null;
 
 async function pollYouTubeChat() {

@@ -621,18 +621,26 @@
             const res = await fetch(url);
             const data = await res.json();
 
-            if (data && data.videoId) {
+            if (data && data.videoId && data.isLive) {
                 state.ytVideoId = data.videoId;
                 state.ytTitle = data.title || 'Live Stream';
-                state.ytIsLive = !!data.isLive;
+                state.ytIsLive = true;
                 
                 if (elements.ytIdBadge) elements.ytIdBadge.textContent = state.ytVideoId;
                 if (elements.ytStreamTitle) elements.ytStreamTitle.textContent = state.ytTitle;
                 
                 fetch(`/api/set_yt?v=${encodeURIComponent(state.ytVideoId)}`).catch(()=>{});
-                showToast(`YouTube stream detected: ${data.title || data.videoId}`, 'success');
+                showToast(`YouTube live stream detected: ${data.title || data.videoId}`, 'success');
+            } else if (data && data.videoId && force) {
+                state.ytVideoId = data.videoId;
+                state.ytTitle = data.title || 'Live Stream';
+                state.ytIsLive = !!data.isLive;
+                if (elements.ytIdBadge) elements.ytIdBadge.textContent = state.ytVideoId;
+                if (elements.ytStreamTitle) elements.ytStreamTitle.textContent = state.ytTitle;
+                fetch(`/api/set_yt?v=${encodeURIComponent(state.ytVideoId)}`).catch(()=>{});
+                showToast(data.isLive ? `YouTube stream detected: ${data.title || data.videoId}` : `Channel stream: ${data.title || data.videoId} (offline)`, data.isLive ? 'success' : 'info');
             } else {
-                showToast('No active YouTube stream detected. Keeping current.', 'info');
+                showToast('No active YouTube live stream detected. Keeping current.', 'info');
             }
         } catch (e) {
             showToast('Could not query YouTube status.', 'error');
