@@ -21,8 +21,8 @@ $sevenTvEmotes = getCachedData('7tv_emotes_63304572', 86400, function() {
     return get7TvEmotes('63304572');
 });
 
-$preloadedYtId = (!empty($ytData['videoId'])) ? $ytData['videoId'] : 'hjuUwbPqkG8';
-$preloadedYtTitle = (!empty($ytData['title'])) ? $ytData['title'] : 'we chillin';
+$preloadedYtId = (!empty($ytData['videoId'])) ? $ytData['videoId'] : 'y2I6AtvDqyk';
+$preloadedYtTitle = (!empty($ytData['title'])) ? $ytData['title'] : 'Live Stream';
 $preloadedYtIsLive = !empty($ytData['isLive']) ? '1' : '0';
 
 $streamerAvatar = $twitchData['avatar'] ?? $kickData['avatar'] ?? 'https://static-cdn.jtvnw.net/jtv_user_pictures/d4d79c6d-e57c-487d-912d-e13e85d1a7bf-profile_image-70x70.png';
@@ -146,6 +146,9 @@ $currentGame = $twitchData['category'] ?? $kickData['category'] ?? 'Escape from 
 
             <button class="btn-small accent" id="btnDetectYt" title="Auto-detect today's YouTube live stream ID from glorious_e channel">
                 🔄 Auto-Detect Live
+            </button>
+            <button class="btn-small" id="btnRefresh7Tv" title="Force refresh 7TV emote list from 7tv.io">
+                🔄 7TV Emotes
             </button>
         </div>
 

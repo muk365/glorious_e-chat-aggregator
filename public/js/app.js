@@ -15,7 +15,7 @@
             youtubeHandle: '@GloriousE',
             twitchUserId: '63304572'
         },
-        defaultYtVideoId: 'hjuUwbPqkG8',
+        defaultYtVideoId: 'y2I6AtvDqyk',
         maxMessagesInDom: 250
     };
 
@@ -80,6 +80,7 @@
         ytStreamTitle: document.getElementById('ytStreamTitle'),
         ytIdBadge: document.getElementById('ytIdBadge'),
         btnDetectYt: document.getElementById('btnDetectYt'),
+        btnRefresh7Tv: document.getElementById('btnRefresh7Tv'),
         ytUrlForm: document.getElementById('ytUrlForm'),
         ytUrlInput: document.getElementById('ytUrlInput'),
         
@@ -309,8 +310,8 @@
         const isSelf = /^(?:glorious_e|gloriouse|glorious)$/i.test(msg.username || '');
         const isBot = isBotUser(msg.username);
         const isMentioned = !isSelf && !isBot && isStreamerMentioned(msg.message);
-        const isFirstMsg = !!msg.firstMsg && platform === 'twitch';
-        const isSubEvent = Boolean(msg.subEvent);
+        const isFirstMsg = !isBot && !!msg.firstMsg && platform === 'twitch';
+        const isSubEvent = !isBot && Boolean(msg.subEvent);
         const subTag = msg.subTag || '⭐ Sub';
         
         // Increment counts
@@ -671,6 +672,40 @@
     }
 
     /**
+     * Force Refresh 7TV Emotes from Server (bypass cache)
+     */
+    async function forceRefresh7TvEmotes() {
+        if (elements.btnRefresh7Tv) {
+            elements.btnRefresh7Tv.disabled = true;
+            elements.btnRefresh7Tv.innerHTML = '🔄 Loading...';
+        }
+
+        try {
+            try { localStorage.removeItem('7tv_emotes_cache'); } catch(e) {}
+            const res = await fetch('/api/7tv_emotes?force=1');
+            if (res.ok) {
+                const emotes = await res.json();
+                if (emotes && typeof emotes === 'object') {
+                    window.SEVEN_TV_EMOTES = emotes;
+                    try { localStorage.setItem('7tv_emotes_cache', JSON.stringify(emotes)); } catch(e) {}
+                    const count = Object.keys(emotes).length;
+                    showToast(`Refreshed 7TV: ${count} emotes loaded!`, 'success');
+                    return;
+                }
+            }
+            showToast('Could not refresh 7TV emotes from server.', 'error');
+        } catch (e) {
+            console.error('[7TV Refresh] Error:', e);
+            showToast('Error refreshing 7TV emotes.', 'error');
+        } finally {
+            if (elements.btnRefresh7Tv) {
+                elements.btnRefresh7Tv.disabled = false;
+                elements.btnRefresh7Tv.innerHTML = '🔄 7TV Emotes';
+            }
+        }
+    }
+
+    /**
      * Twitch User Auth & Direct Chat Sending
      */
     async function checkUserAuth() {
@@ -883,6 +918,11 @@
 
         // Detect YouTube Live
         elements.btnDetectYt.addEventListener('click', () => autoDetectYouTubeLive(true));
+
+        // Force Refresh 7TV Emotes
+        if (elements.btnRefresh7Tv) {
+            elements.btnRefresh7Tv.addEventListener('click', forceRefresh7TvEmotes);
+        }
 
         // Submit manual YouTube URL
         elements.ytUrlForm.addEventListener('submit', (e) => {

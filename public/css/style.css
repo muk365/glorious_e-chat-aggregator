@@ -1131,10 +1131,10 @@ a {
     font-size: 10px;
 }
 
-/* Toast */
+/* Toast Notifications (floats above chat input bar) */
 .toast-container {
     position: fixed;
-    bottom: 38px;
+    bottom: 85px;
     right: 20px;
     display: flex;
     flex-direction: column;

@@ -16,8 +16,25 @@ const STREAMER = {
     twitchUserId: '63304572',
     kickChatroomId: 7457099,
     youtubeHandle: '@GloriousE',
-    defaultYtVideoId: 'hjuUwbPqkG8'
+    youtubeChannelId: 'UCt-78v3wvyWLNORSDRiWkyg',
+    defaultYtVideoId: 'y2I6AtvDqyk'
 };
+
+// Automated bot users to ignore for all highlights
+const IGNORED_BOT_USERS = new Set([
+    'nightbot',
+    'fossabot',
+    'streamelements',
+    'streamlabs',
+    'moobot',
+    'botrix'
+]);
+
+function isBotUser(username) {
+    if (!username) return false;
+    const normalized = username.toLowerCase().replace(/[^a-z0-9_]/g, '');
+    return IGNORED_BOT_USERS.has(normalized);
+}
 
 // Twitch OAuth Credentials (configured in Render.com environment)
 const TWITCH_CLIENT_ID = process.env.TWITCH_CLIENT_ID || '';
@@ -104,52 +121,87 @@ async function getYouTubeLiveStatus(force = false) {
     }
     
     try {
-        const url = `https://www.youtube.com/${STREAMER.youtubeHandle}/live`;
-        const res = await fetch(url, {
-            headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-                'Accept-Language': 'en-US,en;q=0.9'
-            }
-        });
-        const html = await res.text();
-        
         let videoId = null;
-        let title = 'we chillin';
+        let title = 'Live Stream';
         let isLive = false;
-        
-        // Canonical link in <head>
-        const canonMatch = html.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})"/);
-        if (canonMatch) videoId = canonMatch[1];
-        
-        // VideoDetails
-        const detailsMatch = html.match(/"videoDetails":\{([^}]+)\}/);
-        if (detailsMatch) {
-            const block = detailsMatch[1];
-            if (!videoId) {
-                const vm = block.match(/"videoId":"([a-zA-Z0-9_-]{11})"/);
-                if (vm) videoId = vm[1];
+
+        // Method 1: Check https://www.youtube.com/@GloriousE/live with consent bypass
+        try {
+            const url = `https://www.youtube.com/${STREAMER.youtubeHandle}/live?ucbcb=1`;
+            const res = await fetch(url, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                    'Cookie': 'SOCS=CAESEwgDEgk2OTQ0MjAyNjEaAmVuIAEaBgiA_LyaBg; CONSENT=PENDING+999; YES=1'
+                },
+                redirect: 'follow'
+            });
+            const html = await res.text();
+            
+            // Canonical link in <head>
+            const canonMatch = html.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})"/);
+            if (canonMatch) videoId = canonMatch[1];
+            
+            // VideoDetails
+            const detailsMatch = html.match(/"videoDetails":\{([^}]+)\}/);
+            if (detailsMatch) {
+                const block = detailsMatch[1];
+                if (!videoId) {
+                    const vm = block.match(/"videoId":"([a-zA-Z0-9_-]{11})"/);
+                    if (vm) videoId = vm[1];
+                }
+                const tm = block.match(/"title":"(.*?)"/);
+                if (tm) title = tm[1];
+                const lm = block.match(/"isLive":(true|false)/i);
+                if (lm) isLive = lm[1] === 'true';
             }
-            const tm = block.match(/"title":"(.*?)"/);
-            if (tm) title = tm[1];
-            const lm = block.match(/"isLive":(true|false)/i);
-            if (lm) isLive = lm[1] === 'true';
+            
+            if (html.includes('"isLiveNow":true') || html.includes('"isLiveContent":true')) {
+                isLive = true;
+            }
+        } catch (errLive) {
+            console.warn('[YouTube Live] Method 1 failed:', errLive.message);
         }
-        
-        if (html.includes('"isLiveNow":true') || html.includes('"isLiveContent":true')) {
-            isLive = true;
+
+        // Method 2: If videoId not found or canonical points to channel, check the official XML feed
+        if (!videoId && STREAMER.youtubeChannelId) {
+            try {
+                const feedUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${STREAMER.youtubeChannelId}`;
+                const feedRes = await fetch(feedUrl, {
+                    headers: { 'User-Agent': 'Mozilla/5.0' }
+                });
+                const feedText = await feedRes.text();
+                const feedVidMatch = feedText.match(/<yt:videoId>([a-zA-Z0-9_-]{11})<\/yt:videoId>/);
+                if (feedVidMatch) {
+                    videoId = feedVidMatch[1];
+                    const feedTitleMatch = feedText.match(/<entry>[\s\S]*?<title>(.*?)<\/title>/);
+                    if (feedTitleMatch) title = feedTitleMatch[1];
+                    isLive = true;
+                }
+            } catch (errFeed) {
+                console.warn('[YouTube Live] Method 2 (XML feed) failed:', errFeed.message);
+            }
         }
-        
-        videoId = videoId || currentYtVideoId || STREAMER.defaultYtVideoId;
-        currentYtVideoId = videoId;
-        currentYtTitle = title;
-        currentYtIsLive = isLive;
-        
+
+        if (videoId) {
+            const changed = (videoId !== currentYtVideoId);
+            currentYtVideoId = videoId;
+            currentYtTitle = title;
+            currentYtIsLive = isLive;
+            if (changed) {
+                ytContinuation = null;
+                pollYouTubeChat();
+            }
+        } else {
+            videoId = currentYtVideoId || STREAMER.defaultYtVideoId;
+        }
+
         const result = {
             success: true,
             channel: STREAMER.youtubeHandle,
             videoId: videoId,
-            title: title,
-            isLive: isLive,
+            title: currentYtTitle,
+            isLive: currentYtIsLive,
             checkedAt: new Date().toISOString()
         };
         
@@ -334,7 +386,9 @@ function parseTwitchPrivmsg(raw) {
     let subType = null;
     let subTag = null;
 
-    if (tags['bits']) {
+    const isBot = isBotUser(username) || isBotUser(tags['display-name']);
+
+    if (!isBot && tags['bits']) {
         const bitsVal = parseInt(tags['bits'], 10);
         if (!isNaN(bitsVal) && bitsVal > 0) {
             isSubEvent = true;
@@ -344,14 +398,16 @@ function parseTwitchPrivmsg(raw) {
     }
 
     const msgId = tags['msg-id'] || '';
-    if (msgId === 'resub' || msgId === 'sub') {
-        isSubEvent = true;
-        subType = 'sub';
-        subTag = msgId === 'resub' ? '⭐ Resub' : '⭐ Sub';
-    } else if (msgId === 'subgift' || msgId === 'anonsubgift') {
-        isSubEvent = true;
-        subType = 'giftsub';
-        subTag = '🎁 Gift Sub';
+    if (!isBot) {
+        if (msgId === 'resub' || msgId === 'sub') {
+            isSubEvent = true;
+            subType = 'sub';
+            subTag = msgId === 'resub' ? '⭐ Resub' : '⭐ Sub';
+        } else if (msgId === 'subgift' || msgId === 'anonsubgift') {
+            isSubEvent = true;
+            subType = 'giftsub';
+            subTag = '🎁 Gift Sub';
+        }
     }
 
     addMessage({
@@ -361,7 +417,7 @@ function parseTwitchPrivmsg(raw) {
         message: message,
         badges: tags['badges'] || '',
         rawEmotes: tags['emotes'] || '',
-        firstMsg: isFirstMsg,
+        firstMsg: !isBot && isFirstMsg,
         gifUrl: gifUrl,
         subEvent: isSubEvent,
         subType: subType,
@@ -394,6 +450,9 @@ function parseTwitchUsernotice(raw) {
         .replace(/\\'/g, "'");
 
     const username = tags['display-name'] || tags['login'] || 'TwitchUser';
+    if (isBotUser(username) || isBotUser(tags['login']) || isBotUser(tags['display-name'])) {
+        return; // Exclude bots from subscription events
+    }
     const color = tags['color'] || '#9146ff';
 
     const isPrime = tags['msg-param-sub-plan'] === 'Prime';
@@ -562,6 +621,11 @@ function parseKickPush(payload) {
     }
     
     if (content) {
+        if (isBotUser(username)) {
+            isSubEvent = false;
+            subType = null;
+            subTag = null;
+        }
         addMessage({
             platform: 'kick',
             username: username,
@@ -692,6 +756,11 @@ function processYtAction(act) {
     const avatar = item?.authorPhoto?.thumbnails?.[0]?.url || null;
 
     if (text) {
+        if (isBotUser(author)) {
+            isSubEvent = false;
+            subType = null;
+            subTag = null;
+        }
         addMessage({
             id: item.id || null,
             platform: 'youtube',
@@ -858,7 +927,8 @@ const server = http.createServer(async (req, res) => {
     
     // API: 7TV Emotes
     if (pathname === '/api/7tv_emotes') {
-        const emotes = await get7TvEmotes();
+        const force = url.searchParams.get('force') === '1';
+        const emotes = await get7TvEmotes(force);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(emotes));
         return;
@@ -887,7 +957,8 @@ const server = http.createServer(async (req, res) => {
             return;
         }
         if (action === '7tv_emotes') {
-            const emotes = await get7TvEmotes();
+            const force = url.searchParams.get('force') === '1';
+            const emotes = await get7TvEmotes(force);
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify(emotes));
             return;
