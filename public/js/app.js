@@ -188,6 +188,11 @@
             .replace(/'/g, '&#039;');
     }
 
+    function escapeRegExp(str) {
+        if (!str) return '';
+        return String(str).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
     /**
      * Parse message text: URLs, mentions, emojis, Kick emotes, Twitch emotes, 7TV emotes.
      * Order is strictly preserved: URLs are placeholder-protected so mentions and emotes
@@ -197,97 +202,111 @@
      */
     function parseMessageContent(text, platform, rawEmotes, isBot = false, gifUrl = null) {
         if (!text && !gifUrl) return '';
-        let safe = escapeHtml(text || '');
-        
-        // 1. Extract URLs into temporary placeholders so mentions, emojis, and emotes never touch URL text or hrefs
-        const urls = [];
-        safe = safe.replace(/(https?:\/\/[^\s<]+)/g, (match) => {
-            const idx = urls.length;
-            urls.push(match);
-            return `___URL_${idx}___`;
-        });
+        try {
+            let safe = escapeHtml(text || '');
+            
+            // 1. Extract URLs into temporary placeholders so mentions, emojis, and emotes never touch URL text or hrefs
+            const urls = [];
+            safe = safe.replace(/(https?:\/\/[^\s<]+)/g, (match) => {
+                const idx = urls.length;
+                urls.push(match);
+                return `___URL_${idx}___`;
+            });
 
-        // 2. Highlight @mentions in a SINGLE pass (avoids @@ or nested spans)
-        safe = safe.replace(/@([a-zA-Z0-9_\u00A0-\uFFFF]+)|\b(glorious_e|gloriouse)\b/gi, (fullMatch, handleWithAt, bareHandle) => {
-            if (handleWithAt) {
-                const isStreamer = !isBot && /^(?:glorious_e|gloriouse|glorious)$/i.test(handleWithAt);
-                if (isStreamer) {
-                    return `<span class="chat-mention streamer-mention">@${handleWithAt}</span>`;
+            // 2. Highlight @mentions in a SINGLE pass (avoids @@ or nested spans)
+            safe = safe.replace(/@([a-zA-Z0-9_\u00A0-\uFFFF]+)|\b(glorious_e|gloriouse)\b/gi, (fullMatch, handleWithAt, bareHandle) => {
+                if (handleWithAt) {
+                    const isStreamer = !isBot && /^(?:glorious_e|gloriouse|glorious)$/i.test(handleWithAt);
+                    if (isStreamer) {
+                        return `<span class="chat-mention streamer-mention">@${handleWithAt}</span>`;
+                    }
+                    return `<span class="chat-mention">@${handleWithAt}</span>`;
                 }
-                return `<span class="chat-mention">@${handleWithAt}</span>`;
-            }
-            if (bareHandle) {
-                // If typed on Kick without '@', render cleanly once
-                if (!isBot) {
-                    return `<span class="chat-mention streamer-mention">@${bareHandle}</span>`;
+                if (bareHandle) {
+                    // If typed on Kick without '@', render cleanly once
+                    if (!isBot) {
+                        return `<span class="chat-mention streamer-mention">@${bareHandle}</span>`;
+                    }
+                    return bareHandle;
                 }
-                return bareHandle;
-            }
-            return fullMatch;
-        });
+                return fullMatch;
+            });
 
-        // 3. YouTube Emojis (__YTEMOTE__:url:label__) - handles all emoji labels with underscores
-        safe = safe.replace(/__YTEMOTE__:([^:]+):(.*?)__/g, (m, url, label) => {
-            const decUrl = decodeURIComponent(url);
-            const decLabel = decodeURIComponent(label);
-            return `<img class="chat-emote" src="${escapeHtml(decUrl)}" alt="${escapeHtml(decLabel)}" title="${escapeHtml(decLabel)}">`;
-        });
+            // 3. YouTube Emojis (__YTEMOTE__:url:label__) - handles all emoji labels with underscores
+            safe = safe.replace(/__YTEMOTE__:([^:]+):(.*?)__/g, (m, url, label) => {
+                try {
+                    const decUrl = decodeURIComponent(url);
+                    const decLabel = decodeURIComponent(label);
+                    return `<img class="chat-emote" src="${escapeHtml(decUrl)}" alt="${escapeHtml(decLabel)}" title="${escapeHtml(decLabel)}">`;
+                } catch (_) {
+                    return '';
+                }
+            });
 
-        // 4. Kick Native Emotes ([emote:ID:Name])
-        safe = safe.replace(/\[emote:([0-9]+):([^\]]+)\]/g, (m, id, name) => {
-            return `<img class="chat-emote" src="https://files.kick.com/emotes/${id}/fullsize" alt="${escapeHtml(name)}" title="${escapeHtml(name)}">`;
-        });
+            // 4. Kick Native Emotes ([emote:ID:Name])
+            safe = safe.replace(/\[emote:([0-9]+):([^\]]+)\]/g, (m, id, name) => {
+                return `<img class="chat-emote" src="https://files.kick.com/emotes/${id}/fullsize" alt="${escapeHtml(name)}" title="${escapeHtml(name)}">`;
+            });
 
-        // 5. Twitch Native Emotes (from IRC tags)
-        if (platform === 'twitch' && rawEmotes && typeof rawEmotes === 'string') {
-            const parts = rawEmotes.split('/');
-            for (const part of parts) {
-                const [emoteId, ranges] = part.split(':');
-                if (emoteId && ranges) {
-                    const firstRange = ranges.split(',')[0];
-                    const [start, end] = firstRange.split('-').map(Number);
-                    if (!isNaN(start) && !isNaN(end) && end >= start) {
-                        const emoteWord = text.substring(start, end + 1);
-                        if (emoteWord) {
-                            const escapedWord = escapeHtml(emoteWord);
-                            const re = new RegExp('(^|\\s)' + escapedWord.replace(/[.*+?^${}()|[\\]\\]/g, '\\$&') + '(?=\\s|$)', 'g');
-                            safe = safe.replace(re, `$1<img class="chat-emote" src="https://static-cdn.jtvnw.net/emoticons/v2/${emoteId}/default/dark/2.0" alt="${escapedWord}" title="${escapedWord}">`);
+            // 5. Twitch Native Emotes (from IRC tags)
+            if (platform === 'twitch' && rawEmotes && typeof rawEmotes === 'string') {
+                const parts = rawEmotes.split('/');
+                for (const part of parts) {
+                    const [emoteId, ranges] = part.split(':');
+                    if (emoteId && ranges) {
+                        const firstRange = ranges.split(',')[0];
+                        const [start, end] = firstRange.split('-').map(Number);
+                        if (!isNaN(start) && !isNaN(end) && end >= start && start >= 0 && end < text.length) {
+                            const emoteWord = text.substring(start, end + 1);
+                            if (emoteWord) {
+                                const escapedWord = escapeHtml(emoteWord);
+                                const regexPattern = '(^|\\s)' + escapeRegExp(escapedWord) + '(?=\\s|$)';
+                                try {
+                                    const re = new RegExp(regexPattern, 'g');
+                                    safe = safe.replace(re, `$1<img class="chat-emote" src="https://static-cdn.jtvnw.net/emoticons/v2/${emoteId}/default/dark/2.0" alt="${escapedWord}" title="${escapedWord}">`);
+                                } catch (reErr) {
+                                    console.warn('Twitch emote regex failed:', emoteWord, reErr);
+                                }
+                            }
                         }
                     }
                 }
             }
-        }
 
-        // 6. 7TV Emotes (Channel & Global 7TV Emote Sets)
-        const emotesMap = window.SEVEN_TV_EMOTES || {};
-        if (emotesMap && typeof emotesMap === 'object' && Object.keys(emotesMap).length > 0) {
-            const tokens = safe.split(/(<[^>]+>|\s+)/);
-            for (let i = 0; i < tokens.length; i++) {
-                const token = tokens[i];
-                if (!token.startsWith('<') && emotesMap[token]) {
-                    tokens[i] = `<img class="chat-emote" src="${emotesMap[token]}" alt="${token}" title="${token}" loading="lazy">`;
+            // 6. 7TV Emotes (Channel & Global 7TV Emote Sets)
+            const emotesMap = window.SEVEN_TV_EMOTES || {};
+            if (emotesMap && typeof emotesMap === 'object' && Object.keys(emotesMap).length > 0) {
+                const tokens = safe.split(/(<[^>]+>|\s+)/);
+                for (let i = 0; i < tokens.length; i++) {
+                    const token = tokens[i];
+                    if (!token.startsWith('<') && emotesMap[token]) {
+                        tokens[i] = `<img class="chat-emote" src="${emotesMap[token]}" alt="${token}" title="${token}" loading="lazy">`;
+                    }
+                }
+                safe = tokens.join('');
+            }
+
+            // 6b. Twitch Animated GIFs (from Giphy via Twitch IRC tags)
+            if (gifUrl) {
+                const gifHtml = `<div class="chat-gif-wrap"><img src="${escapeHtml(gifUrl)}" class="chat-gif-img" alt="Twitch GIF" loading="lazy" onclick="window.open(this.src,'_blank')"></div>`;
+                if (/\[[^\]]+ GIF by [^\]]+\]/i.test(safe)) {
+                    safe = safe.replace(/\[[^\]]+ GIF by [^\]]+\]/i, gifHtml);
+                } else {
+                    safe += gifHtml;
                 }
             }
-            safe = tokens.join('');
+
+            // 7. Restore URLs as proper clickable <a> links
+            safe = safe.replace(/___URL_(\d+)___/g, (m, idx) => {
+                const u = urls[parseInt(idx, 10)];
+                return `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`;
+            });
+
+            return safe;
+        } catch (err) {
+            console.error('Error parsing message content:', err);
+            return escapeHtml(text || '');
         }
-
-        // 6b. Twitch Animated GIFs (from Giphy via Twitch IRC tags)
-        if (gifUrl) {
-            const gifHtml = `<div class="chat-gif-wrap"><img src="${escapeHtml(gifUrl)}" class="chat-gif-img" alt="Twitch GIF" loading="lazy" onclick="window.open(this.src,'_blank')"></div>`;
-            if (/\[[^\]]+ GIF by [^\]]+\]/i.test(safe)) {
-                safe = safe.replace(/\[[^\]]+ GIF by [^\]]+\]/i, gifHtml);
-            } else {
-                safe += gifHtml;
-            }
-        }
-
-        // 7. Restore URLs as proper clickable <a> links
-        safe = safe.replace(/___URL_(\d+)___/g, (m, idx) => {
-            const u = urls[parseInt(idx, 10)];
-            return `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`;
-        });
-
-        return safe;
     }
 
     /**
@@ -347,56 +366,88 @@
             row.classList.add('hidden-by-sub-filter');
         }
 
-        const timeStr = formatTime(msg.timestamp);
-        const iconSvg = ICONS[platform] || ICONS.twitch;
-        const color = msg.color || (platform === 'kick' ? '#00e701' : platform === 'twitch' ? '#a970ff' : '#ff4d4d');
-        const safeUser = escapeHtml(msg.username || 'User');
+        try {
+            const timeStr = formatTime(msg.timestamp);
+            const iconSvg = ICONS[platform] || ICONS.twitch;
+            const color = msg.color || (platform === 'kick' ? '#00e701' : platform === 'twitch' ? '#a970ff' : '#ff4d4d');
+            const safeUser = escapeHtml(msg.username || 'User');
 
-        let messageText = msg.message || '';
-        let replyHtml = '';
-        if (msg.replyParent && msg.replyParent.displayName) {
-            const parentUser = escapeHtml(msg.replyParent.displayName);
-            const parentBody = escapeHtml(msg.replyParent.body || '');
-            replyHtml = `<div class="chat-reply-quote" title="Replying to @${parentUser}: ${parentBody}">↳ Répond à @${parentUser}${parentBody ? ` : <span class="reply-quote-body">${parentBody}</span>` : ''}</div>`;
-            
-            // Clean leading @parentUser from text since reply quote already shows who is being replied to
-            const parentLogin = (msg.replyParent.userLogin || '').replace(/[^a-zA-Z0-9_]/g, '');
-            const parentDisp = (msg.replyParent.displayName || '').replace(/[^a-zA-Z0-9_]/g, '');
-            const stripRegex = new RegExp(`^@(?:${parentLogin}|${parentDisp})\\s+`, 'i');
-            messageText = messageText.replace(stripRegex, '');
+            let messageText = msg.message || '';
+            let replyHtml = '';
+            if (msg.replyParent && msg.replyParent.displayName) {
+                const parentUser = escapeHtml(msg.replyParent.displayName);
+                const parentBody = escapeHtml(msg.replyParent.body || '');
+                replyHtml = `<div class="chat-reply-quote" title="Replying to @${parentUser}: ${parentBody}">↳ Répond à @${parentUser}${parentBody ? ` : <span class="reply-quote-body">${parentBody}</span>` : ''}</div>`;
+                
+                // Clean leading @parentUser from text since reply quote already shows who is being replied to
+                const parentLogin = (msg.replyParent.userLogin || '').replace(/[^a-zA-Z0-9_]/g, '');
+                const parentDisp = (msg.replyParent.displayName || '').replace(/[^a-zA-Z0-9_]/g, '');
+                const stripRegex = new RegExp(`^@(?:${parentLogin}|${parentDisp})\\s+`, 'i');
+                messageText = messageText.replace(stripRegex, '');
+            }
+
+            let systemNoticeHtml = '';
+            if (msg.systemMsg) {
+                systemNoticeHtml = `<div class="chat-system-notice" title="Subscription milestone">${escapeHtml(msg.systemMsg)}</div>`;
+            }
+
+            const parsedText = parseMessageContent(messageText, platform, msg.rawEmotes, isBot, msg.gifUrl);
+
+            let avatarHtml = '';
+            if (msg.avatar) {
+                avatarHtml = `<img src="${escapeHtml(msg.avatar)}" alt="" class="chat-avatar" loading="lazy" onerror="this.style.display='none'">`;
+            }
+
+            let firstMsgHtml = '';
+            if (isFirstMsg) {
+                firstMsgHtml = `<span class="first-chatter-pill" title="First time chatting in channel">👋 First</span>`;
+            }
+
+            let subTagHtml = '';
+            if (isSubEvent) {
+                subTagHtml = `<span class="sub-event-pill" title="Subscription, Bits or Support Event">${escapeHtml(subTag)}</span>`;
+            }
+
+            row.innerHTML = `
+                <span class="chat-time">${timeStr}</span>
+                <span class="platform-badge-pill ${platform}" title="${platform.toUpperCase()} Chat">
+                    ${iconSvg}
+                </span>
+                ${avatarHtml}
+                <div class="chat-content-wrap">
+                    ${replyHtml}
+                    ${systemNoticeHtml}
+                    ${firstMsgHtml}${subTagHtml}<span class="chat-author" style="color:${color}">${safeUser}</span>:
+                    <span class="chat-text">${parsedText}</span>
+                </div>
+            `;
+
+            elements.chatFeed.appendChild(row);
+        } catch (domErr) {
+            console.error('Error rendering message row:', domErr, msg);
+            try {
+                const fallbackTime = formatTime(msg.timestamp);
+                const fallbackSvg = ICONS[platform] || ICONS.twitch;
+                const fallbackColor = msg.color || '#a970ff';
+                const fallbackUser = escapeHtml(msg.username || 'User');
+                const fallbackSubHtml = isSubEvent ? `<span class="sub-event-pill">${escapeHtml(subTag)}</span>` : '';
+                const fallbackFirstHtml = isFirstMsg ? `<span class="first-chatter-pill">👋 First</span>` : '';
+                const fallbackSysHtml = msg.systemMsg ? `<div class="chat-system-notice">${escapeHtml(msg.systemMsg)}</div>` : '';
+
+                row.innerHTML = `
+                    <span class="chat-time">${fallbackTime}</span>
+                    <span class="platform-badge-pill ${platform}">${fallbackSvg}</span>
+                    <div class="chat-content-wrap">
+                        ${fallbackSysHtml}
+                        ${fallbackFirstHtml}${fallbackSubHtml}<span class="chat-author" style="color:${fallbackColor}">${fallbackUser}</span>:
+                        <span class="chat-text">${escapeHtml(msg.message || '')}</span>
+                    </div>
+                `;
+                elements.chatFeed.appendChild(row);
+            } catch (fatalErr) {
+                console.error('Fatal error in appendMessage fallback:', fatalErr);
+            }
         }
-
-        const parsedText = parseMessageContent(messageText, platform, msg.rawEmotes, isBot, msg.gifUrl);
-
-        let avatarHtml = '';
-        if (msg.avatar) {
-            avatarHtml = `<img src="${escapeHtml(msg.avatar)}" alt="" class="chat-avatar" loading="lazy" onerror="this.style.display='none'">`;
-        }
-
-        let firstMsgHtml = '';
-        if (isFirstMsg) {
-            firstMsgHtml = `<span class="first-chatter-pill" title="First time chatting in channel">👋 First</span>`;
-        }
-
-        let subTagHtml = '';
-        if (isSubEvent) {
-            subTagHtml = `<span class="sub-event-pill" title="Subscription, Bits or Support Event">${escapeHtml(subTag)}</span>`;
-        }
-
-        row.innerHTML = `
-            <span class="chat-time">${timeStr}</span>
-            <span class="platform-badge-pill ${platform}" title="${platform.toUpperCase()} Chat">
-                ${iconSvg}
-            </span>
-            ${avatarHtml}
-            <div class="chat-content-wrap">
-                ${replyHtml}
-                ${firstMsgHtml}${subTagHtml}<span class="chat-author" style="color:${color}">${safeUser}</span>:
-                <span class="chat-text">${parsedText}</span>
-            </div>
-        `;
-
-        elements.chatFeed.appendChild(row);
 
         // Prune old DOM elements: prioritize removing regular messages to protect subs and mentions
         if (elements.chatFeed.children.length > CONFIG.maxMessagesInDom) {
@@ -411,7 +462,9 @@
         // Auto-scroll logic
         if (state.autoScroll) {
             elements.chatScrollArea.scrollTop = elements.chatScrollArea.scrollHeight;
-        } else {
+        } else if (!row.classList.contains('hidden-by-filter') &&
+                   !row.classList.contains('hidden-by-mention-filter') &&
+                   !row.classList.contains('hidden-by-sub-filter')) {
             state.unreadCount++;
             updateUnreadBadge();
         }
@@ -427,10 +480,16 @@
     }
 
     function scrollToBottom() {
-        elements.chatScrollArea.scrollTop = elements.chatScrollArea.scrollHeight;
         state.autoScroll = true;
         state.unreadCount = 0;
         updateUnreadBadge();
+        if (elements.btnToggleScroll) {
+            elements.btnToggleScroll.classList.add('active');
+        }
+        elements.chatScrollArea.scrollTop = elements.chatScrollArea.scrollHeight;
+        requestAnimationFrame(() => {
+            elements.chatScrollArea.scrollTop = elements.chatScrollArea.scrollHeight;
+        });
     }
 
     function updateFilterBadges() {
@@ -878,14 +937,17 @@
         elements.filterKick.addEventListener('click', () => {
             state.filters.kick = !state.filters.kick;
             applyFilters();
+            scrollToBottom();
         });
         elements.filterTwitch.addEventListener('click', () => {
             state.filters.twitch = !state.filters.twitch;
             applyFilters();
+            scrollToBottom();
         });
         elements.filterYoutube.addEventListener('click', () => {
             state.filters.youtube = !state.filters.youtube;
             applyFilters();
+            scrollToBottom();
         });
 
         // Mentions Filter Chip
@@ -893,6 +955,7 @@
             elements.filterMentions.addEventListener('click', () => {
                 state.mentionsOnly = !state.mentionsOnly;
                 applyFilters();
+                scrollToBottom();
                 showToast(state.mentionsOnly ? 'Filtering: Showing only messages tagging Glorious_E' : 'Showing all messages', 'info');
             });
         }
@@ -902,6 +965,7 @@
             elements.filterSubs.addEventListener('click', () => {
                 state.subsOnly = !state.subsOnly;
                 applyFilters();
+                scrollToBottom();
                 showToast(state.subsOnly ? 'Filtering: Showing only Subs, Gift Subs & Bits' : 'Showing all messages', 'info');
             });
         }

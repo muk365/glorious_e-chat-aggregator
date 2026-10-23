@@ -248,7 +248,20 @@ function parseTwitchUsernotice(raw) {
     const msgId = String(tags['msg-id'] || '').trim().toLowerCase();
     const ritualName = String(tags['msg-param-ritual-name'] || '').trim().toLowerCase();
     const category = String(tags['msg-param-category'] || '').trim().toLowerCase();
+
+    let sysMsg = (tags['system-msg'] || '')
+        .replace(/\\s/g, ' ')
+        .replace(/\\:/g, ':')
+        .replace(/\\;/g, ';')
+        .replace(/\\\\/g, '\\')
+        .replace(/\\r/g, '')
+        .replace(/\\n/g, ' ')
+        .replace(/\\'/g, "'");
+
     const username = tags['display-name'] || tags['login'] || 'TwitchUser';
+    if (isBotUser(username) || isBotUser(tags['login']) || isBotUser(tags['display-name'])) {
+        return; // Exclude bots from subscription and ritual events
+    }
     const color = tags['color'] || '#9146ff';
 
     // 1. First-Time Chatter Ritual / Introduction
@@ -266,7 +279,7 @@ function parseTwitchUsernotice(raw) {
             platform: 'twitch',
             username: username,
             color: color,
-            message: customMsg || `${username} is chatting for the first time!`,
+            message: customMsg || sysMsg || `${username} is chatting for the first time!`,
             badges: tags['badges'] || '',
             rawEmotes: tags['emotes'] || '',
             firstMsg: true,
@@ -276,22 +289,37 @@ function parseTwitchUsernotice(raw) {
         return;
     }
 
-    // 2. Stream Streaks / Watch Streaks: NOT sub!
+    // 2. Stream Streaks / Watch Streaks (viewermilestone):
+    // Must NOT have sub badge and must NOT be highlighted as sub
     if (msgId === 'viewermilestone' || category === 'watch-streak') {
-        let sysMsg = (tags['system-msg'] || '')
-            .replace(/\\s/g, ' ')
-            .replace(/\\:/g, ':')
-            .replace(/\\;/g, ';')
-            .replace(/\\\\/g, '\\')
-            .replace(/\\r/g, '')
-            .replace(/\\n/g, ' ')
-            .replace(/\\'/g, "'");
-
+        const streakText = customMsg || sysMsg || `${username} shared a watch streak!`;
+        const streakSystemNotice = customMsg && sysMsg ? sysMsg : '';
         addMessage({
             platform: 'twitch',
             username: username,
             color: color,
-            message: customMsg ? (sysMsg ? `[${sysMsg}] ${customMsg}` : customMsg) : sysMsg || `${username} shared a watch streak!`,
+            message: streakText,
+            systemMsg: streakSystemNotice,
+            badges: tags['badges'] || '',
+            rawEmotes: tags['emotes'] || '',
+            firstMsg: false,
+            subEvent: false,
+            subType: null,
+            subTag: null,
+            timestamp: Date.now()
+        });
+        return;
+    }
+
+    // 3. Raids: Clean notification without sub badge
+    if (msgId === 'raid' || msgId === 'unraid') {
+        const raidCount = tags['msg-param-viewerCount'] || tags['msg-param-viewercount'] || '';
+        const raidText = sysMsg || (raidCount ? `${username} raided with ${raidCount} viewers!` : `${username} raided the channel!`);
+        addMessage({
+            platform: 'twitch',
+            username: username,
+            color: color,
+            message: raidText,
             badges: tags['badges'] || '',
             rawEmotes: tags['emotes'] || '',
             firstMsg: false,
@@ -300,6 +328,85 @@ function parseTwitchUsernotice(raw) {
         });
         return;
     }
+
+    // 4. Subscriptions, Resubs, Gift Subs & Bits Badges ONLY
+    let isSubEvent = false;
+    let subType = null;
+    let tagLabel = null;
+    const isPrime = tags['msg-param-sub-plan'] === 'Prime';
+
+    if (msgId === 'sub') {
+        isSubEvent = true;
+        subType = 'sub';
+        tagLabel = isPrime ? '👑 Prime Sub' : '⭐ Sub';
+    } else if (msgId === 'resub') {
+        isSubEvent = true;
+        subType = 'resub';
+        const months = tags['msg-param-cumulative-months'] || tags['msg-param-months'] || '';
+        if (isPrime) {
+            tagLabel = months ? `👑 Prime Resub (${months} mo)` : '👑 Prime Resub';
+        } else {
+            tagLabel = months ? `⭐ Resub (${months} mo)` : '⭐ Resub';
+        }
+    } else if (msgId === 'subgift' || msgId === 'anonsubgift') {
+        isSubEvent = true;
+        subType = 'giftsub';
+        const recipient = tags['msg-param-recipient-display-name'] || tags['msg-param-recipient-user-name'];
+        tagLabel = recipient ? `🎁 Gift Sub ➔ ${recipient}` : '🎁 Gift Sub';
+    } else if (msgId === 'submysterygift' || msgId === 'anonmysterysubgift') {
+        isSubEvent = true;
+        subType = 'giftsub';
+        const count = tags['msg-param-mass-gift-count'] || tags['msg-param-sender-count'] || '';
+        tagLabel = count ? `🎁 ${count} Gift Subs` : '🎁 Gift Subs';
+    } else if (msgId === 'primecommunitygift') {
+        isSubEvent = true;
+        subType = 'giftsub';
+        tagLabel = '🎁 Prime Gift';
+    } else if (msgId === 'bitsbadgetier' || msgId === 'rewardgift') {
+        isSubEvent = true;
+        subType = 'bits';
+        tagLabel = '💎 Bits';
+    } else if (msgId === 'giftpaidupgrade') {
+        isSubEvent = true;
+        subType = 'sub';
+        tagLabel = '⭐ Sub Upgrade';
+    }
+
+    if (!isSubEvent) {
+        // Unknown or general milestone notice: display as standard chat notification, NOT as sub
+        addMessage({
+            platform: 'twitch',
+            username: username,
+            color: color,
+            message: customMsg || sysMsg || `${username} milestone`,
+            systemMsg: customMsg && sysMsg ? sysMsg : '',
+            badges: tags['badges'] || '',
+            rawEmotes: tags['emotes'] || '',
+            firstMsg: false,
+            subEvent: false,
+            subType: null,
+            subTag: null,
+            timestamp: Date.now()
+        });
+        return;
+    }
+
+    const displayText = customMsg || sysMsg || `${username} subscribed to the channel!`;
+    const systemNotice = customMsg && sysMsg ? sysMsg : '';
+
+    addMessage({
+        platform: 'twitch',
+        username: username,
+        color: color,
+        message: displayText,
+        systemMsg: systemNotice,
+        badges: tags['badges'] || '',
+        rawEmotes: tags['emotes'] || '',
+        subEvent: true,
+        subType: subType,
+        subTag: tagLabel,
+        timestamp: Date.now()
+    });
 }
 
 // ==========================================

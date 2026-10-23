@@ -562,12 +562,14 @@ function parseTwitchUsernotice(raw) {
     // 2. Stream Streaks / Watch Streaks (viewermilestone):
     // Must NOT have sub badge and must NOT be highlighted as sub
     if (msgId === 'viewermilestone' || category === 'watch-streak') {
-        const streakText = customMsg ? (sysMsg ? `[${sysMsg}] ${customMsg}` : customMsg) : sysMsg || `${username} shared a watch streak!`;
+        const streakText = customMsg || sysMsg || `${username} shared a watch streak!`;
+        const streakSystemNotice = customMsg && sysMsg ? sysMsg : '';
         addMessage({
             platform: 'twitch',
             username: username,
             color: color,
             message: streakText,
+            systemMsg: streakSystemNotice,
             badges: tags['badges'] || '',
             rawEmotes: tags['emotes'] || '',
             firstMsg: false,
@@ -647,6 +649,7 @@ function parseTwitchUsernotice(raw) {
             username: username,
             color: color,
             message: customMsg || sysMsg || `${username} milestone`,
+            systemMsg: customMsg && sysMsg ? sysMsg : '',
             badges: tags['badges'] || '',
             rawEmotes: tags['emotes'] || '',
             firstMsg: false,
@@ -658,18 +661,15 @@ function parseTwitchUsernotice(raw) {
         return;
     }
 
-    let displayText = customMsg;
-    if (!displayText) {
-        displayText = sysMsg || `${username} subscribed to the channel!`;
-    } else if (sysMsg) {
-        displayText = `[${sysMsg}] ${customMsg}`;
-    }
+    const displayText = customMsg || sysMsg || `${username} subscribed to the channel!`;
+    const systemNotice = customMsg && sysMsg ? sysMsg : '';
 
     addMessage({
         platform: 'twitch',
         username: username,
         color: color,
         message: displayText,
+        systemMsg: systemNotice,
         badges: tags['badges'] || '',
         rawEmotes: tags['emotes'] || '',
         subEvent: true,
