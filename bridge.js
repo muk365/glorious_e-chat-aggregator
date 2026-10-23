@@ -21,9 +21,11 @@ const STREAMER = {
 // Global state
 let currentYtVideoId = STREAMER.defaultYtVideoId;
 let recentMessages = [];
-const MAX_HISTORY = 60;
+const MAX_HISTORY = 400;
+const MAX_HIGHLIGHT_HISTORY = 150;
+const recentHighlights = [];
 const clients = new Set();
-const sessionFirstChatters = new Set();
+const pendingFirstChatters = new Map();
 
 function addMessage(msg) {
     if (!msg || !msg.message) return;
@@ -34,8 +36,34 @@ function addMessage(msg) {
     if (recentMessages.length > MAX_HISTORY) {
         recentMessages.shift();
     }
+
+    if (msg.subEvent || msg.firstMsg) {
+        recentHighlights.push(msg);
+        if (recentHighlights.length > MAX_HIGHLIGHT_HISTORY) {
+            recentHighlights.shift();
+        }
+    }
     
     broadcast(msg);
+}
+
+function getFullHistory() {
+    const combined = [];
+    const seen = new Set();
+    for (const m of recentHighlights) {
+        if (m && m.id && !seen.has(m.id)) {
+            seen.add(m.id);
+            combined.push(m);
+        }
+    }
+    for (const m of recentMessages) {
+        if (m && m.id && !seen.has(m.id)) {
+            seen.add(m.id);
+            combined.push(m);
+        }
+    }
+    combined.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+    return combined;
 }
 
 function broadcast(msg) {
@@ -143,14 +171,22 @@ function parseTwitchPrivmsg(raw) {
     // Check all possible Twitch tags/values for first-time chatters (including reply messages)
     const fmVal = String(tags['first-msg'] || tags['first_msg'] || '').trim().toLowerCase();
     const msgIdVal = String(tags['msg-id'] || '').trim().toLowerCase();
-    const ritualVal = String(tags['msg-param-ritual-name'] || '').trim().toLowerCase();
 
     let isFirstMsg = fmVal === '1' || fmVal === 'true'
         || msgIdVal === 'first-msg' || msgIdVal === 'first_msg'
-        || msgIdVal === 'user_intro' || msgIdVal === 'new_chatter'
-        || (msgIdVal === 'ritual' && ritualVal === 'new_chatter')
-        || (userLower && sessionFirstChatters.has(userLower))
-        || (displayLower && sessionFirstChatters.has(displayLower));
+        || msgIdVal === 'user_intro';
+
+    // If this user had a pending introduction ritual notice, consume it for this message only
+    if (!isFirstMsg) {
+        const now = Date.now();
+        if (pendingFirstChatters.has(userLower) && pendingFirstChatters.get(userLower) > now) {
+            isFirstMsg = true;
+            pendingFirstChatters.delete(userLower);
+        } else if (pendingFirstChatters.has(displayLower) && pendingFirstChatters.get(displayLower) > now) {
+            isFirstMsg = true;
+            pendingFirstChatters.delete(displayLower);
+        }
+    }
 
     // Parse threaded reply parent information if available
     let replyParent = null;
@@ -170,11 +206,6 @@ function parseTwitchPrivmsg(raw) {
             userLogin: tags['reply-parent-user-login'] || '',
             body: parentBody
         };
-    }
-
-    if (isFirstMsg) {
-        if (userLower) sessionFirstChatters.add(userLower);
-        if (displayLower) sessionFirstChatters.add(displayLower);
     }
 
     let gifUrl = null;
@@ -216,9 +247,11 @@ function parseTwitchUsernotice(raw) {
 
     const msgId = String(tags['msg-id'] || '').trim().toLowerCase();
     const ritualName = String(tags['msg-param-ritual-name'] || '').trim().toLowerCase();
+    const category = String(tags['msg-param-category'] || '').trim().toLowerCase();
     const username = tags['display-name'] || tags['login'] || 'TwitchUser';
     const color = tags['color'] || '#9146ff';
 
+    // 1. First-Time Chatter Ritual / Introduction
     const isRitualFirstChatter = (msgId === 'ritual' && ritualName === 'new_chatter')
         || msgId === 'user_intro'
         || msgId === 'first-msg'
@@ -226,8 +259,8 @@ function parseTwitchUsernotice(raw) {
         || ritualName === 'new_chatter';
 
     if (isRitualFirstChatter) {
-        if (username) sessionFirstChatters.add(username.toLowerCase());
-        if (tags['login']) sessionFirstChatters.add(tags['login'].toLowerCase());
+        if (username) pendingFirstChatters.set(username.toLowerCase(), Date.now() + 60000);
+        if (tags['login']) pendingFirstChatters.set(tags['login'].toLowerCase(), Date.now() + 60000);
 
         addMessage({
             platform: 'twitch',
@@ -237,8 +270,35 @@ function parseTwitchUsernotice(raw) {
             badges: tags['badges'] || '',
             rawEmotes: tags['emotes'] || '',
             firstMsg: true,
+            subEvent: false,
             timestamp: Date.now()
         });
+        return;
+    }
+
+    // 2. Stream Streaks / Watch Streaks: NOT sub!
+    if (msgId === 'viewermilestone' || category === 'watch-streak') {
+        let sysMsg = (tags['system-msg'] || '')
+            .replace(/\\s/g, ' ')
+            .replace(/\\:/g, ':')
+            .replace(/\\;/g, ';')
+            .replace(/\\\\/g, '\\')
+            .replace(/\\r/g, '')
+            .replace(/\\n/g, ' ')
+            .replace(/\\'/g, "'");
+
+        addMessage({
+            platform: 'twitch',
+            username: username,
+            color: color,
+            message: customMsg ? (sysMsg ? `[${sysMsg}] ${customMsg}` : customMsg) : sysMsg || `${username} shared a watch streak!`,
+            badges: tags['badges'] || '',
+            rawEmotes: tags['emotes'] || '',
+            firstMsg: false,
+            subEvent: false,
+            timestamp: Date.now()
+        });
+        return;
     }
 }
 
@@ -496,10 +556,11 @@ const server = http.createServer((req, res) => {
         return;
     }
     
-    if (url.pathname === '/history') {
+    if (url.pathname === '/history' || url.pathname === '/api/history') {
+        const history = getFullHistory();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
-            messages: recentMessages,
+            messages: history,
             ytVideoId: currentYtVideoId
         }));
         return;
@@ -544,10 +605,11 @@ server.on('upgrade', (req, socket, head) => {
     console.log(`[Server] New browser connected. Total clients: ${clients.size}`);
     
     // Immediately send history on connect
-    if (recentMessages.length > 0) {
+    const history = getFullHistory();
+    if (history.length > 0) {
         sendWsFrame(socket, JSON.stringify({
             type: 'history',
-            messages: recentMessages
+            messages: history
         }));
     }
     

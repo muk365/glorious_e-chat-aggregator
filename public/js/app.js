@@ -16,7 +16,7 @@
             twitchUserId: '63304572'
         },
         defaultYtVideoId: 'y2I6AtvDqyk',
-        maxMessagesInDom: 250
+        maxMessagesInDom: 1000
     };
 
     // Bots to ignore for @mentions
@@ -398,9 +398,14 @@
 
         elements.chatFeed.appendChild(row);
 
-        // Prune old DOM elements to maintain high performance
+        // Prune old DOM elements: prioritize removing regular messages to protect subs and mentions
         if (elements.chatFeed.children.length > CONFIG.maxMessagesInDom) {
-            elements.chatFeed.removeChild(elements.chatFeed.firstElementChild);
+            const oldestNormal = elements.chatFeed.querySelector('.chat-message-row:not(.streamer-highlight):not(.sub-highlight)');
+            if (oldestNormal) {
+                elements.chatFeed.removeChild(oldestNormal);
+            } else {
+                elements.chatFeed.removeChild(elements.chatFeed.firstElementChild);
+            }
         }
 
         // Auto-scroll logic

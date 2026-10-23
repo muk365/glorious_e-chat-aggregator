@@ -49,7 +49,9 @@ let currentYtVideoId = STREAMER.defaultYtVideoId;
 let currentYtTitle = 'Live Stream';
 let currentYtIsLive = false;
 let recentMessages = [];
-const MAX_HISTORY = 70;
+const MAX_HISTORY = 400;
+const MAX_HIGHLIGHT_HISTORY = 150;
+const recentHighlights = []; // dedicated buffer so subs and highlights are never lost on reload
 const wsClients = new Set();
 
 // In-memory caches with TTL
@@ -60,8 +62,8 @@ const cache = {
     twitch: { data: null, expires: 0 }
 };
 
-// Track first-time chatters seen in this session to ensure replies or follow-up messages stay highlighted
-const sessionFirstChatters = new Set();
+// Map of pending first-time chatter introduction notices (username -> expiry timestamp)
+const pendingFirstChatters = new Map();
 
 // Prevent EPIPE crash if output stream closes
 process.stdout?.on('error', (err) => { if (err.code === 'EPIPE') return; });
@@ -76,8 +78,35 @@ function addMessage(msg) {
     if (recentMessages.length > MAX_HISTORY) {
         recentMessages.shift();
     }
+
+    // Keep dedicated history of support events (subs, bits) and first-time chatters
+    if (msg.subEvent || msg.firstMsg) {
+        recentHighlights.push(msg);
+        if (recentHighlights.length > MAX_HIGHLIGHT_HISTORY) {
+            recentHighlights.shift();
+        }
+    }
     
     broadcast(msg);
+}
+
+function getFullHistory() {
+    const combined = [];
+    const seen = new Set();
+    for (const m of recentHighlights) {
+        if (m && m.id && !seen.has(m.id)) {
+            seen.add(m.id);
+            combined.push(m);
+        }
+    }
+    for (const m of recentMessages) {
+        if (m && m.id && !seen.has(m.id)) {
+            seen.add(m.id);
+            combined.push(m);
+        }
+    }
+    combined.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
+    return combined;
 }
 
 function broadcast(msg) {
@@ -382,14 +411,22 @@ function parseTwitchPrivmsg(raw) {
     // Check all possible Twitch tags/values for first-time chatters (including reply messages)
     const fmVal = String(tags['first-msg'] || tags['first_msg'] || '').trim().toLowerCase();
     const msgIdVal = String(tags['msg-id'] || '').trim().toLowerCase();
-    const ritualVal = String(tags['msg-param-ritual-name'] || '').trim().toLowerCase();
 
     let isFirstMsg = fmVal === '1' || fmVal === 'true'
         || msgIdVal === 'first-msg' || msgIdVal === 'first_msg'
-        || msgIdVal === 'user_intro' || msgIdVal === 'new_chatter'
-        || (msgIdVal === 'ritual' && ritualVal === 'new_chatter')
-        || (userLower && sessionFirstChatters.has(userLower))
-        || (displayLower && sessionFirstChatters.has(displayLower));
+        || msgIdVal === 'user_intro';
+
+    // If this user had a pending introduction ritual notice, consume it for this message only
+    if (!isFirstMsg) {
+        const now = Date.now();
+        if (pendingFirstChatters.has(userLower) && pendingFirstChatters.get(userLower) > now) {
+            isFirstMsg = true;
+            pendingFirstChatters.delete(userLower);
+        } else if (pendingFirstChatters.has(displayLower) && pendingFirstChatters.get(displayLower) > now) {
+            isFirstMsg = true;
+            pendingFirstChatters.delete(displayLower);
+        }
+    }
 
     // Parse threaded reply parent information if available
     let replyParent = null;
@@ -409,11 +446,6 @@ function parseTwitchPrivmsg(raw) {
             userLogin: tags['reply-parent-user-login'] || '',
             body: parentBody
         };
-    }
-
-    if (!isBot && isFirstMsg) {
-        if (userLower) sessionFirstChatters.add(userLower);
-        if (displayLower) sessionFirstChatters.add(displayLower);
     }
 
     let gifUrl = null;
@@ -485,6 +517,7 @@ function parseTwitchUsernotice(raw) {
 
     const msgId = String(tags['msg-id'] || '').trim().toLowerCase();
     const ritualName = String(tags['msg-param-ritual-name'] || '').trim().toLowerCase();
+    const category = String(tags['msg-param-category'] || '').trim().toLowerCase();
 
     let sysMsg = (tags['system-msg'] || '')
         .replace(/\\s/g, ' ')
@@ -501,7 +534,7 @@ function parseTwitchUsernotice(raw) {
     }
     const color = tags['color'] || '#9146ff';
 
-    // First-Time Chatter Ritual / Introduction (previously misclassified as sub event!)
+    // 1. First-Time Chatter Ritual / Introduction
     const isRitualFirstChatter = (msgId === 'ritual' && ritualName === 'new_chatter')
         || msgId === 'user_intro'
         || msgId === 'first-msg'
@@ -509,8 +542,8 @@ function parseTwitchUsernotice(raw) {
         || ritualName === 'new_chatter';
 
     if (isRitualFirstChatter) {
-        if (username) sessionFirstChatters.add(username.toLowerCase());
-        if (tags['login']) sessionFirstChatters.add(tags['login'].toLowerCase());
+        if (username) pendingFirstChatters.set(username.toLowerCase(), Date.now() + 60000);
+        if (tags['login']) pendingFirstChatters.set(tags['login'].toLowerCase(), Date.now() + 60000);
 
         addMessage({
             platform: 'twitch',
@@ -526,11 +559,56 @@ function parseTwitchUsernotice(raw) {
         return;
     }
 
-    const isPrime = tags['msg-param-sub-plan'] === 'Prime';
-    let tagLabel = isPrime ? '👑 Prime Sub' : '⭐ Sub';
-    let subType = 'sub';
+    // 2. Stream Streaks / Watch Streaks (viewermilestone):
+    // Must NOT have sub badge and must NOT be highlighted as sub
+    if (msgId === 'viewermilestone' || category === 'watch-streak') {
+        const streakText = customMsg ? (sysMsg ? `[${sysMsg}] ${customMsg}` : customMsg) : sysMsg || `${username} shared a watch streak!`;
+        addMessage({
+            platform: 'twitch',
+            username: username,
+            color: color,
+            message: streakText,
+            badges: tags['badges'] || '',
+            rawEmotes: tags['emotes'] || '',
+            firstMsg: false,
+            subEvent: false,
+            subType: null,
+            subTag: null,
+            timestamp: Date.now()
+        });
+        return;
+    }
 
-    if (msgId === 'resub') {
+    // 3. Raids: Clean notification without sub badge
+    if (msgId === 'raid' || msgId === 'unraid') {
+        const raidCount = tags['msg-param-viewerCount'] || tags['msg-param-viewercount'] || '';
+        const raidText = sysMsg || (raidCount ? `${username} raided with ${raidCount} viewers!` : `${username} raided the channel!`);
+        addMessage({
+            platform: 'twitch',
+            username: username,
+            color: color,
+            message: raidText,
+            badges: tags['badges'] || '',
+            rawEmotes: tags['emotes'] || '',
+            firstMsg: false,
+            subEvent: false,
+            timestamp: Date.now()
+        });
+        return;
+    }
+
+    // 4. Subscriptions, Resubs, Gift Subs & Bits Badges ONLY
+    let isSubEvent = false;
+    let subType = null;
+    let tagLabel = null;
+    const isPrime = tags['msg-param-sub-plan'] === 'Prime';
+
+    if (msgId === 'sub') {
+        isSubEvent = true;
+        subType = 'sub';
+        tagLabel = isPrime ? '👑 Prime Sub' : '⭐ Sub';
+    } else if (msgId === 'resub') {
+        isSubEvent = true;
         subType = 'resub';
         const months = tags['msg-param-cumulative-months'] || tags['msg-param-months'] || '';
         if (isPrime) {
@@ -539,22 +617,45 @@ function parseTwitchUsernotice(raw) {
             tagLabel = months ? `⭐ Resub (${months} mo)` : '⭐ Resub';
         }
     } else if (msgId === 'subgift' || msgId === 'anonsubgift') {
+        isSubEvent = true;
         subType = 'giftsub';
         const recipient = tags['msg-param-recipient-display-name'] || tags['msg-param-recipient-user-name'];
         tagLabel = recipient ? `🎁 Gift Sub ➔ ${recipient}` : '🎁 Gift Sub';
     } else if (msgId === 'submysterygift' || msgId === 'anonmysterysubgift') {
+        isSubEvent = true;
         subType = 'giftsub';
         const count = tags['msg-param-mass-gift-count'] || tags['msg-param-sender-count'] || '';
         tagLabel = count ? `🎁 ${count} Gift Subs` : '🎁 Gift Subs';
     } else if (msgId === 'primecommunitygift') {
+        isSubEvent = true;
         subType = 'giftsub';
         tagLabel = '🎁 Prime Gift';
     } else if (msgId === 'bitsbadgetier' || msgId === 'rewardgift') {
+        isSubEvent = true;
         subType = 'bits';
         tagLabel = '💎 Bits';
     } else if (msgId === 'giftpaidupgrade') {
+        isSubEvent = true;
         subType = 'sub';
         tagLabel = '⭐ Sub Upgrade';
+    }
+
+    if (!isSubEvent) {
+        // Unknown or general milestone notice: display as standard chat notification, NOT as sub
+        addMessage({
+            platform: 'twitch',
+            username: username,
+            color: color,
+            message: customMsg || sysMsg || `${username} milestone`,
+            badges: tags['badges'] || '',
+            rawEmotes: tags['emotes'] || '',
+            firstMsg: false,
+            subEvent: false,
+            subType: null,
+            subTag: null,
+            timestamp: Date.now()
+        });
+        return;
     }
 
     let displayText = customMsg;
@@ -966,9 +1067,10 @@ const server = http.createServer(async (req, res) => {
     
     // API: History
     if (pathname === '/api/history' || pathname === '/history') {
+        const history = getFullHistory();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
-            messages: recentMessages,
+            messages: history,
             ytVideoId: currentYtVideoId
         }));
         return;
@@ -1356,10 +1458,11 @@ server.on('upgrade', (req, socket, head) => {
     wsClients.add(socket);
     console.log(`[WebSocket] Client connected. Total: ${wsClients.size}`);
     
-    if (recentMessages.length > 0) {
+    const history = getFullHistory();
+    if (history.length > 0) {
         sendWsFrame(socket, JSON.stringify({
             type: 'history',
-            messages: recentMessages
+            messages: history
         }));
     }
     
