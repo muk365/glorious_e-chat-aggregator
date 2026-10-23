@@ -107,6 +107,14 @@ $currentGame = $twitchData['category'] ?? $kickData['category'] ?? 'Escape from 
                 <span class="chip-dot"></span>
                 <span class="chip-count" id="countMentions">0</span>
             </button>
+
+            <!-- Subs, Gift Subs & Bits Filter Chip -->
+            <button class="filter-chip subs" id="filterSubs" title="Click to view only Subs, Gift Subs & Bits (Press 5)">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="#ef4444"><path d="M12 2l2.4 7.2h7.6l-6 4.8 2.4 7.2-6.4-4.8-6.4 4.8 2.4-7.2-6-4.8h7.6z"/></svg>
+                <span>Subs &amp; Bits</span>
+                <span class="chip-dot"></span>
+                <span class="chip-count" id="countSubs">0</span>
+            </button>
         </div>
 
         <!-- Right Controls -->
@@ -264,7 +272,7 @@ $currentGame = $twitchData['category'] ?? $kickData['category'] ?? 'Escape from 
             <span>Shortcuts:</span>
             <span><kbd class="kbd-badge">F</kbd> Fullscreen</span>
             <span><kbd class="kbd-badge">X</kbd> Clear</span>
-            <span><kbd class="kbd-badge">1</kbd> <kbd class="kbd-badge">2</kbd> <kbd class="kbd-badge">3</kbd> <kbd class="kbd-badge">4</kbd> Filters</span>
+            <span><kbd class="kbd-badge">1</kbd> <kbd class="kbd-badge">2</kbd> <kbd class="kbd-badge">3</kbd> <kbd class="kbd-badge">4</kbd> <kbd class="kbd-badge">5</kbd> Filters</span>
         </div>
     </footer>
 

@@ -75,8 +75,15 @@ Puis ouvrez votre navigateur sur : **[http://localhost:8088](http://localhost:80
    - Les émotes animées (WebP) s'affichent correctement sans être altérées par les liens HTTP.
 4. **Filtres interactifs (en haut)** :
    - Cliquez sur les boutons **Kick**, **Twitch** ou **YouTube** pour filtrer et n'afficher que les plateformes souhaitées.
-   - Compteur en temps réel des messages reçus pour chaque plateforme.
-5. **Gestion dynamique de YouTube Live** :
+   - Filtre **@Mentions** (touche <kbd>4</kbd>) pour isoler les messages interpellant Glorious_E.
+   - Filtre **Subs & Bits** (touche <kbd>5</kbd>) pour isoler instantanément les abonnements, dons de subs et bits.
+   - Compteurs en temps réel des messages reçus pour chaque catégorie.
+5. **Mise en valeur rouge des Subs, Gift Subs & Bits** :
+   - Sur Twitch : Abonnements (`⭐ Sub`), Réabonnements (`⭐ Resub`), Subs offerts (`🎁 Gift Sub`), Bits (`💎 Bits`).
+   - Sur YouTube : Super Chats (`💰 Super Chat`), Super Stickers (`🎨 Super Sticker`), Adhésions chaîne (`⭐ Member`).
+   - Sur Kick : Abonnements (`⭐ Sub`) et Cadeaux de subs (`🎁 Gift Sub`).
+   - Badge rouge distinctif devant le pseudo et bandeau rouge lumineux sur toute la ligne du message.
+6. **Gestion dynamique de YouTube Live** :
    - Détection automatique du live du jour via `https://www.youtube.com/@GloriousE/live`.
    - Bouton **🔄 Auto-Detect Live** pour forcer la mise à jour immédiate si le streamer relance un live.
    - Champ de saisie pour coller manuellement n'importe quel lien YouTube ou ID (11 caractères).

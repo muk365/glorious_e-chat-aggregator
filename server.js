@@ -291,6 +291,8 @@ function initTwitch() {
                 }
                 if (line.includes('PRIVMSG')) {
                     parseTwitchPrivmsg(line);
+                } else if (line.includes('USERNOTICE')) {
+                    parseTwitchUsernotice(line);
                 }
             }
         };
@@ -327,6 +329,31 @@ function parseTwitchPrivmsg(raw) {
         }
     }
 
+    // Support Events: Bits and in-chat Sub notices
+    let isSubEvent = false;
+    let subType = null;
+    let subTag = null;
+
+    if (tags['bits']) {
+        const bitsVal = parseInt(tags['bits'], 10);
+        if (!isNaN(bitsVal) && bitsVal > 0) {
+            isSubEvent = true;
+            subType = 'bits';
+            subTag = `💎 ${bitsVal.toLocaleString()} Bits`;
+        }
+    }
+
+    const msgId = tags['msg-id'] || '';
+    if (msgId === 'resub' || msgId === 'sub') {
+        isSubEvent = true;
+        subType = 'sub';
+        subTag = msgId === 'resub' ? '⭐ Resub' : '⭐ Sub';
+    } else if (msgId === 'subgift' || msgId === 'anonsubgift') {
+        isSubEvent = true;
+        subType = 'giftsub';
+        subTag = '🎁 Gift Sub';
+    }
+
     addMessage({
         platform: 'twitch',
         username: tags['display-name'] || username,
@@ -336,6 +363,82 @@ function parseTwitchPrivmsg(raw) {
         rawEmotes: tags['emotes'] || '',
         firstMsg: isFirstMsg,
         gifUrl: gifUrl,
+        subEvent: isSubEvent,
+        subType: subType,
+        subTag: subTag,
+        timestamp: Date.now()
+    });
+}
+
+function parseTwitchUsernotice(raw) {
+    const tagsMatch = raw.match(/^@([^ ]+) [^ ]+ USERNOTICE #[^ ]+(?:\s*:(.*))?$/);
+    if (!tagsMatch) return;
+    
+    const rawTags = tagsMatch[1];
+    const customMsg = tagsMatch[2] ? tagsMatch[2].trim() : '';
+    
+    const tags = {};
+    rawTags.split(';').forEach(kv => {
+        const eqIdx = kv.indexOf('=');
+        if (eqIdx !== -1) {
+            tags[kv.substring(0, eqIdx)] = kv.substring(eqIdx + 1);
+        }
+    });
+
+    const msgId = tags['msg-id'] || 'sub';
+    let sysMsg = (tags['system-msg'] || '')
+        .replace(/\\s/g, ' ')
+        .replace(/\\:/g, ':')
+        .replace(/\\;/g, ';')
+        .replace(/\\\\/g, '\\')
+        .replace(/\\'/g, "'");
+
+    const username = tags['display-name'] || tags['login'] || 'TwitchUser';
+    const color = tags['color'] || '#9146ff';
+
+    let tagLabel = '⭐ Sub';
+    let subType = 'sub';
+
+    if (msgId === 'resub') {
+        subType = 'resub';
+        const months = tags['msg-param-cumulative-months'] || tags['msg-param-months'] || '';
+        tagLabel = months ? `⭐ Resub (${months} mo)` : '⭐ Resub';
+    } else if (msgId === 'subgift' || msgId === 'anonsubgift') {
+        subType = 'giftsub';
+        const recipient = tags['msg-param-recipient-display-name'] || tags['msg-param-recipient-user-name'];
+        tagLabel = recipient ? `🎁 Gift Sub ➔ ${recipient}` : '🎁 Gift Sub';
+    } else if (msgId === 'submysterygift' || msgId === 'anonmysterysubgift') {
+        subType = 'giftsub';
+        const count = tags['msg-param-mass-gift-count'] || tags['msg-param-sender-count'] || '';
+        tagLabel = count ? `🎁 ${count} Gift Subs` : '🎁 Gift Subs';
+    } else if (msgId === 'primecommunitygift') {
+        subType = 'giftsub';
+        tagLabel = '🎁 Prime Gift';
+    } else if (msgId === 'bitsbadgetier' || msgId === 'rewardgift') {
+        subType = 'bits';
+        tagLabel = '💎 Bits';
+    } else if (msgId === 'giftpaidupgrade') {
+        subType = 'sub';
+        tagLabel = '⭐ Sub Upgrade';
+    }
+
+    let displayText = customMsg;
+    if (!displayText) {
+        displayText = sysMsg || `${username} subscribed to the channel!`;
+    } else if (sysMsg) {
+        displayText = `[${sysMsg}] ${customMsg}`;
+    }
+
+    addMessage({
+        platform: 'twitch',
+        username: username,
+        color: color,
+        message: displayText,
+        badges: tags['badges'] || '',
+        rawEmotes: tags['emotes'] || '',
+        subEvent: true,
+        subType: subType,
+        subTag: tagLabel,
         timestamp: Date.now()
     });
 }
@@ -417,14 +520,41 @@ function parseKickPush(payload) {
     if (typeof payload === 'string') {
         try { eventData = JSON.parse(payload); } catch (e) { return; }
     }
+
+    const eventName = eventData.event || eventData.type || '';
     let msgObj = eventData.data || eventData;
     if (typeof msgObj === 'string') {
         try { msgObj = JSON.parse(msgObj); } catch (e) {}
     }
-    const sender = msgObj.sender || msgObj.user || {};
-    const username = sender.username || 'KickUser';
-    const content = msgObj.content || msgObj.message || '';
-    const color = sender.identity?.color || '#00e701';
+
+    let isSubEvent = false;
+    let subType = null;
+    let subTag = null;
+    let username = 'KickUser';
+    let content = '';
+    let color = '#00e701';
+
+    // Kick Subscription & Gift Sub Events
+    if (eventName.includes('SubscriptionEvent') || eventName === 'subscription') {
+        isSubEvent = true;
+        subType = 'sub';
+        username = msgObj.username || 'KickUser';
+        const months = msgObj.months || 1;
+        subTag = months > 1 ? `⭐ Resub (${months} mo)` : '⭐ Sub';
+        content = `${username} subscribed to the channel! (${months} month${months > 1 ? 's' : ''})`;
+    } else if (eventName.includes('GiftedSubscriptions') || eventName.includes('LuckyUsersWhoGotGift') || eventName === 'gifted_subscriptions') {
+        isSubEvent = true;
+        subType = 'giftsub';
+        username = msgObj.gifter_username || msgObj.username || 'Someone';
+        const giftCount = msgObj.gifted_usernames?.length || msgObj.count || 1;
+        subTag = `🎁 ${giftCount} Gift Sub${giftCount > 1 ? 's' : ''}`;
+        content = `${username} gifted ${giftCount} subscription${giftCount > 1 ? 's' : ''} to the channel!`;
+    } else {
+        const sender = msgObj.sender || msgObj.user || {};
+        username = sender.username || 'KickUser';
+        content = msgObj.content || msgObj.message || '';
+        color = sender.identity?.color || '#00e701';
+    }
     
     if (content) {
         addMessage({
@@ -432,6 +562,9 @@ function parseKickPush(payload) {
             username: username,
             color: color,
             message: content,
+            subEvent: isSubEvent,
+            subType: subType,
+            subTag: subTag,
             timestamp: Date.now()
         });
     }
@@ -493,13 +626,29 @@ async function pollYouTubeChat() {
 }
 
 function processYtAction(act) {
-    const item = act?.addChatItemAction?.item?.liveChatTextMessageRenderer 
-              || act?.addChatItemAction?.item?.liveChatPaidMessageRenderer;
+    const addAction = act?.addChatItemAction?.item || act?.addLiveChatTickerItemAction?.item;
+    if (!addAction) return;
+
+    const textItem = addAction.liveChatTextMessageRenderer;
+    const paidItem = addAction.liveChatPaidMessageRenderer;
+    const stickerItem = addAction.liveChatPaidStickerRenderer;
+    const memberItem = addAction.liveChatMembershipItemRenderer;
+    const giftItem = addAction.liveChatSponsorshipsGiftPurchaseAnnouncementRenderer;
+
+    const item = textItem || paidItem || stickerItem || memberItem || giftItem;
     if (!item) return;
-    
-    const author = item?.authorName?.simpleText || 'YouTubeUser';
+
+    let isSubEvent = false;
+    let subType = null;
+    let subTag = null;
+
+    let author = item?.authorName?.simpleText 
+              || item?.header?.liveChatSponsorshipsHeaderRenderer?.authorName?.simpleText 
+              || 'YouTubeUser';
     let text = '';
-    for (const run of (item?.message?.runs || [])) {
+
+    const runs = item?.message?.runs || item?.headerSubtext?.runs || item?.header?.liveChatSponsorshipsHeaderRenderer?.primaryText?.runs || [];
+    for (const run of runs) {
         if (run.emoji && run.emoji.image?.thumbnails?.[0]?.url) {
             const emoteUrl = run.emoji.image.thumbnails[0].url;
             const emoteLabel = run.emoji.shortcuts?.[0] || run.emoji.image.accessibility?.accessibilityData?.label || 'emoji';
@@ -508,8 +657,35 @@ function processYtAction(act) {
             text += run.text || '';
         }
     }
+
+    if (paidItem) {
+        isSubEvent = true;
+        subType = 'superchat';
+        const amount = paidItem.purchaseAmountText?.simpleText || '';
+        subTag = amount ? `💰 Super Chat (${amount})` : '💰 Super Chat';
+        text = text ? `[${amount}] ${text}` : `Sent a ${amount} Super Chat!`;
+    } else if (stickerItem) {
+        isSubEvent = true;
+        subType = 'supersticker';
+        const amount = stickerItem.purchaseAmountText?.simpleText || '';
+        subTag = amount ? `🎨 Super Sticker (${amount})` : '🎨 Super Sticker';
+        text = `Sent a Super Sticker! (${amount})`;
+    } else if (memberItem) {
+        isSubEvent = true;
+        subType = 'membership';
+        subTag = '⭐ Member';
+        const subtext = item.headerSubtext?.simpleText || runs.map(r => r.text || '').join('') || 'Joined as a channel member!';
+        text = text ? `${subtext} — ${text}` : subtext;
+    } else if (giftItem) {
+        isSubEvent = true;
+        subType = 'giftsub';
+        subTag = '🎁 Gift Member';
+        const prim = item.header?.liveChatSponsorshipsHeaderRenderer?.primaryText?.runs?.map(r => r.text || '').join('') || 'Gifted channel memberships!';
+        text = prim;
+    }
+
     const avatar = item?.authorPhoto?.thumbnails?.[0]?.url || null;
-    
+
     if (text) {
         addMessage({
             id: item.id || null,
@@ -518,6 +694,9 @@ function processYtAction(act) {
             color: '#ff4d4d',
             avatar: avatar,
             message: text.trim(),
+            subEvent: isSubEvent,
+            subType: subType,
+            subTag: subTag,
             timestamp: parseInt((item.timestampUsec || (Date.now() * 1000)) / 1000)
         });
     }

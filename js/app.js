@@ -44,6 +44,7 @@
         autoScroll: true,
         unreadCount: 0,
         mentionsOnly: false,
+        subsOnly: false,
         filters: {
             kick: true,
             twitch: true,
@@ -53,7 +54,8 @@
             kick: 0,
             twitch: 0,
             youtube: 0,
-            mentions: 0
+            mentions: 0,
+            subs: 0
         },
         fontSize: 14,
         seenMessageIds: new Set(),
@@ -86,10 +88,12 @@
         filterTwitch: document.getElementById('filterTwitch'),
         filterYoutube: document.getElementById('filterYoutube'),
         filterMentions: document.getElementById('filterMentions'),
+        filterSubs: document.getElementById('filterSubs'),
         countKick: document.getElementById('countKick'),
         countTwitch: document.getElementById('countTwitch'),
         countYoutube: document.getElementById('countYoutube'),
         countMentions: document.getElementById('countMentions'),
+        countSubs: document.getElementById('countSubs'),
         
         // Tools
         btnClearChat: document.getElementById('btnClearChat'),
@@ -306,6 +310,8 @@
         const isBot = isBotUser(msg.username);
         const isMentioned = !isSelf && !isBot && isStreamerMentioned(msg.message);
         const isFirstMsg = !!msg.firstMsg && platform === 'twitch';
+        const isSubEvent = Boolean(msg.subEvent);
+        const subTag = msg.subTag || '⭐ Sub';
         
         // Increment counts
         if (state.counts[platform] !== undefined) {
@@ -313,6 +319,9 @@
         }
         if (isMentioned) {
             state.counts.mentions++;
+        }
+        if (isSubEvent) {
+            state.counts.subs++;
         }
         updateFilterBadges();
 
@@ -324,11 +333,17 @@
         if (isFirstMsg) {
             row.classList.add('twitch-first-chatter');
         }
+        if (isSubEvent) {
+            row.classList.add('sub-highlight');
+        }
         if (!state.filters[platform]) {
             row.classList.add('hidden-by-filter');
         }
         if (state.mentionsOnly && !isMentioned) {
             row.classList.add('hidden-by-mention-filter');
+        }
+        if (state.subsOnly && !isSubEvent) {
+            row.classList.add('hidden-by-sub-filter');
         }
 
         const timeStr = formatTime(msg.timestamp);
@@ -347,6 +362,11 @@
             firstMsgHtml = `<span class="first-chatter-pill" title="First time chatting in channel">👋 First</span>`;
         }
 
+        let subTagHtml = '';
+        if (isSubEvent) {
+            subTagHtml = `<span class="sub-event-pill" title="Subscription, Bits or Support Event">${escapeHtml(subTag)}</span>`;
+        }
+
         row.innerHTML = `
             <span class="chat-time">${timeStr}</span>
             <span class="platform-badge-pill ${platform}" title="${platform.toUpperCase()} Chat">
@@ -354,7 +374,7 @@
             </span>
             ${avatarHtml}
             <div class="chat-content-wrap">
-                ${firstMsgHtml}<span class="chat-author" style="color:${color}">${safeUser}</span>:
+                ${firstMsgHtml}${subTagHtml}<span class="chat-author" style="color:${color}">${safeUser}</span>:
                 <span class="chat-text">${parsedText}</span>
             </div>
         `;
@@ -396,6 +416,7 @@
         if (elements.countTwitch) elements.countTwitch.textContent = state.counts.twitch.toLocaleString();
         if (elements.countYoutube) elements.countYoutube.textContent = state.counts.youtube.toLocaleString();
         if (elements.countMentions) elements.countMentions.textContent = state.counts.mentions.toLocaleString();
+        if (elements.countSubs) elements.countSubs.textContent = state.counts.subs.toLocaleString();
     }
 
     function applyFilters() {
@@ -412,6 +433,13 @@
             } else {
                 row.classList.remove('hidden-by-mention-filter');
             }
+
+            // Filter subs & bits only
+            if (state.subsOnly && !row.classList.contains('sub-highlight')) {
+                row.classList.add('hidden-by-sub-filter');
+            } else {
+                row.classList.remove('hidden-by-sub-filter');
+            }
         });
 
         elements.filterKick.classList.toggle('active', state.filters.kick);
@@ -420,6 +448,10 @@
         if (elements.filterMentions) {
             elements.filterMentions.classList.toggle('active', state.counts.mentions > 0 || state.mentionsOnly);
             elements.filterMentions.classList.toggle('filtering-only', state.mentionsOnly);
+        }
+        if (elements.filterSubs) {
+            elements.filterSubs.classList.toggle('active', state.counts.subs > 0 || state.subsOnly);
+            elements.filterSubs.classList.toggle('filtering-only', state.subsOnly);
         }
     }
 
@@ -809,6 +841,15 @@
             });
         }
 
+        // Subs & Bits Filter Chip
+        if (elements.filterSubs) {
+            elements.filterSubs.addEventListener('click', () => {
+                state.subsOnly = !state.subsOnly;
+                applyFilters();
+                showToast(state.subsOnly ? 'Filtering: Showing only Subs, Gift Subs & Bits' : 'Showing all messages', 'info');
+            });
+        }
+
         // Clear Chat
         elements.btnClearChat.addEventListener('click', () => {
             elements.chatFeed.innerHTML = '';
@@ -912,6 +953,8 @@
                 elements.filterYoutube.click();
             } else if (e.key === '4') {
                 if (elements.filterMentions) elements.filterMentions.click();
+            } else if (e.key === '5') {
+                if (elements.filterSubs) elements.filterSubs.click();
             }
         });
     }

@@ -242,6 +242,25 @@ a {
     box-shadow: 0 0 6px #000;
 }
 
+.filter-chip.subs.active {
+    background: rgba(239, 68, 68, 0.16);
+    border-color: rgba(239, 68, 68, 0.45);
+    color: #f87171;
+}
+
+.filter-chip.subs.filtering-only {
+    background: #ef4444;
+    border-color: #dc2626;
+    color: #ffffff;
+}
+.filter-chip.subs.filtering-only svg {
+    fill: #ffffff;
+}
+.filter-chip.subs.filtering-only .chip-dot {
+    background: #ffffff;
+    box-shadow: 0 0 6px #ffffff;
+}
+
 .filter-chip .chip-dot {
     width: 7px;
     height: 7px;
@@ -684,8 +703,37 @@ a {
     vertical-align: middle;
 }
 
+/* SUBS, GIFT SUBS, BITS & SUPPORT EVENTS (RED HIGHLIGHT) */
+.chat-message-row.sub-highlight {
+    background: linear-gradient(90deg, rgba(239, 68, 68, 0.20) 0%, rgba(239, 68, 68, 0.04) 100%);
+    border-left: 3px solid #ef4444;
+    margin: 2px 0;
+}
+
+.chat-message-row.sub-highlight:hover {
+    background: linear-gradient(90deg, rgba(239, 68, 68, 0.28) 0%, rgba(239, 68, 68, 0.08) 100%);
+}
+
+.sub-event-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    background: rgba(239, 68, 68, 0.24);
+    color: #fca5a5;
+    border: 1px solid rgba(239, 68, 68, 0.50);
+    font-size: 10px;
+    font-weight: 700;
+    padding: 0 5px;
+    border-radius: 3px;
+    margin-right: 4px;
+    user-select: none;
+    vertical-align: middle;
+    box-shadow: 0 1px 4px rgba(239, 68, 68, 0.2);
+}
+
 .chat-message-row.hidden-by-filter,
-.chat-message-row.hidden-by-mention-filter {
+.chat-message-row.hidden-by-mention-filter,
+.chat-message-row.hidden-by-sub-filter {
     display: none !important;
 }
 
