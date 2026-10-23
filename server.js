@@ -157,65 +157,89 @@ async function getYouTubeLiveStatus(force = false) {
         let title = 'Live Stream';
         let isLive = false;
 
-        // Method 1: Check https://www.youtube.com/@GloriousE/live with consent bypass
-        try {
-            const url = `https://www.youtube.com/${STREAMER.youtubeHandle}/live?ucbcb=1`;
-            const res = await fetch(url, {
-                headers: {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-                    'Accept-Language': 'en-US,en;q=0.9',
-                    'Cookie': 'SOCS=CAESEwgDEgk2OTQ0MjAyNjEaAmVuIAEaBgiA_LyaBg; CONSENT=PENDING+999; YES=1'
-                },
-                redirect: 'follow'
-            });
-            const html = await res.text();
-            
-            // Canonical link in <head>
-            const canonMatch = html.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})"/);
-            if (canonMatch) videoId = canonMatch[1];
-            
-            // VideoDetails
-            const detailsMatch = html.match(/"videoDetails":\{([^}]+)\}/);
-            if (detailsMatch) {
-                const block = detailsMatch[1];
-                if (!videoId) {
-                    const vm = block.match(/"videoId":"([a-zA-Z0-9_-]{11})"/);
-                    if (vm) videoId = vm[1];
-                }
-                const tm = block.match(/"title":"(.*?)"/);
-                if (tm) title = tm[1];
-                const lm = block.match(/"isLive":(true|false)/i);
-                if (lm) isLive = lm[1] === 'true';
-            }
-            
-            if (html.includes('"isLiveNow":true') || html.includes('"isLiveContent":true')) {
-                isLive = true;
-            }
-        } catch (errLive) {
-            console.warn('[YouTube Live] Method 1 failed:', errLive.message);
-        }
+        const endpoints = [
+            `https://www.youtube.com/${STREAMER.youtubeHandle}/live?ucbcb=1`,
+            `https://www.youtube.com/channel/${STREAMER.youtubeChannelId}/live?ucbcb=1`,
+            `https://www.youtube.com/${STREAMER.youtubeHandle}/streams?ucbcb=1`,
+            `https://www.youtube.com/channel/${STREAMER.youtubeChannelId}/streams?ucbcb=1`
+        ];
 
-        // Method 2: If videoId not found or canonical points to channel, check the official XML feed
-        if (!videoId && STREAMER.youtubeChannelId) {
+        const reqHeaders = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Cookie': 'SOCS=CAESEwgDEgk2OTQ0MjAyNjEaAmVuIAEaBgiA_LyaBg; CONSENT=PENDING+999; YES=1'
+        };
+
+        for (const ep of endpoints) {
             try {
-                const feedUrl = `https://www.youtube.com/feeds/videos.xml?channel_id=${STREAMER.youtubeChannelId}`;
-                const feedRes = await fetch(feedUrl, {
-                    headers: { 'User-Agent': 'Mozilla/5.0' }
+                const res = await fetch(ep, {
+                    headers: reqHeaders,
+                    redirect: 'follow'
                 });
-                const feedText = await feedRes.text();
-                const feedVidMatch = feedText.match(/<yt:videoId>([a-zA-Z0-9_-]{11})<\/yt:videoId>/);
-                if (feedVidMatch) {
-                    videoId = feedVidMatch[1];
-                    const feedTitleMatch = feedText.match(/<entry>[\s\S]*?<title>(.*?)<\/title>/);
-                    if (feedTitleMatch) title = feedTitleMatch[1];
-                    isLive = true;
+                const html = await res.text();
+
+                // 1. Canonical tag pointing to watch?v=
+                const canonMatch = html.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})"/);
+                if (canonMatch) {
+                    videoId = canonMatch[1];
                 }
-            } catch (errFeed) {
-                console.warn('[YouTube Live] Method 2 (XML feed) failed:', errFeed.message);
+
+                // 2. OpenGraph / Twitter meta tags
+                if (!videoId) {
+                    const ogMatch = html.match(/<meta property="og:url" content="https:\/\/www\.youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})"/);
+                    if (ogMatch) videoId = ogMatch[1];
+                }
+                if (!videoId) {
+                    const ogVidMatch = html.match(/<meta property="og:video:url" content="https:\/\/www\.youtube\.com\/embed\/([a-zA-Z0-9_-]{11})"/);
+                    if (ogVidMatch) videoId = ogVidMatch[1];
+                }
+
+                // 3. Streams tab / rich grid LIVE badge
+                if (!videoId) {
+                    const liveBadgeMatch = html.match(/"text":"LIVE"[^}]+?"animationActivationTargetId":"([a-zA-Z0-9_-]{11})"/);
+                    if (liveBadgeMatch) videoId = liveBadgeMatch[1];
+                }
+                if (!videoId) {
+                    const liveThumbMatch = html.match(/https:\/\/i\.ytimg\.com\/vi\/([a-zA-Z0-9_-]{11})\/[^"]+[\s\S]{1,500}?"text":"LIVE"/);
+                    if (liveThumbMatch) videoId = liveThumbMatch[1];
+                }
+
+                // Check title in html
+                const titleMatch = html.match(/<meta property="og:title" content="(.*?)"/) ||
+                                   html.match(/<title>(.*?) - YouTube<\/title>/);
+                if (titleMatch && titleMatch[1]) {
+                    title = titleMatch[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"');
+                }
+
+                // Check live status
+                const hasLiveTag = html.includes('"isLive":true') ||
+                                   html.includes('"isLiveNow":true') ||
+                                   html.includes('"isLiveContent":true') ||
+                                   html.includes('"text":"LIVE"') ||
+                                   html.includes('THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE') ||
+                                   html.includes('BADGE_STYLE_TYPE_LIVE_NOW');
+
+                if (videoId) {
+                    isLive = hasLiveTag;
+                    break; // Successfully detected live video
+                }
+            } catch (epErr) {
+                console.warn(`[YouTube Live] Endpoint ${ep} failed:`, epErr.message);
             }
         }
 
+        // Fetch clean title via oEmbed if videoId was found
         if (videoId) {
+            try {
+                const oembedRes = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`);
+                if (oembedRes.ok) {
+                    const oembedData = await oembedRes.json();
+                    if (oembedData && oembedData.title) {
+                        title = oembedData.title;
+                    }
+                }
+            } catch (_) {}
+
             const changed = (videoId !== currentYtVideoId);
             currentYtVideoId = videoId;
             currentYtTitle = title;
@@ -225,6 +249,7 @@ async function getYouTubeLiveStatus(force = false) {
                 pollYouTubeChat();
             }
         } else {
+            // Keep current videoId or fallback to default
             videoId = currentYtVideoId || STREAMER.defaultYtVideoId;
         }
 
@@ -243,7 +268,7 @@ async function getYouTubeLiveStatus(force = false) {
     } catch (e) {
         return {
             success: false,
-            videoId: currentYtVideoId,
+            videoId: currentYtVideoId || STREAMER.defaultYtVideoId,
             title: currentYtTitle,
             isLive: currentYtIsLive,
             error: e.message

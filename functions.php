@@ -38,64 +38,71 @@ function checkYoutubeLive($handle = '@GloriousE') {
         $cleanHandle = '@' . $cleanHandle;
     }
     
-    $url = "https://www.youtube.com/" . $cleanHandle . "/live";
+    $cleanHandle = ltrim($handle, '@');
+    $endpoints = [
+        "https://www.youtube.com/@" . $cleanHandle . "/live?ucbcb=1",
+        "https://www.youtube.com/@" . $cleanHandle . "/streams?ucbcb=1"
+    ];
+
     $ctx = stream_context_create([
         "http" => [
             "method" => "GET",
             "header" => "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36\r\n" .
-                        "Accept-Language: en-US,en;q=0.9\r\n",
+                        "Accept-Language: en-US,en;q=0.9\r\n" .
+                        "Cookie: SOCS=CAESEwgDEgk2OTQ0MjAyNjEaAmVuIAEaBgiA_LyaBg; CONSENT=PENDING+999; YES=1\r\n",
             "follow_location" => 1,
             "timeout" => 7
         ]
     ]);
     
-    $html = @file_get_contents($url, false, $ctx);
-    if (!$html) {
-        return [
-            'success' => false,
-            'isLive' => false,
-            'videoId' => null,
-            'title' => null,
-            'error' => 'Could not connect to YouTube'
-        ];
-    }
-    
     $videoId = null;
     $title = null;
     $isLive = false;
-    
-    // 1. Check canonical link in <head> (Highest accuracy for the target stream)
-    if (preg_match('/<link rel="canonical" href="https:\/\/www\.youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})"/', $html, $m)) {
-        $videoId = $m[1];
-    }
 
-    // 2. Extract videoDetails block for the primary video
-    if (preg_match('/"videoDetails":\{([^}]+)\}/', $html, $detailsMatch)) {
-        $detailsBlock = $detailsMatch[1];
-        if (!$videoId && preg_match('/"videoId":"([a-zA-Z0-9_-]{11})"/', $detailsBlock, $vm)) {
-            $videoId = $vm[1];
-        }
-        if (preg_match('/"title":"(.*?)"/', $detailsBlock, $tm)) {
-            $title = $tm[1];
-        }
-        if (preg_match('/"isLive":(true|false)/i', $detailsBlock, $lm)) {
-            $isLive = ($lm[1] === 'true');
-        } elseif (preg_match('/"isLiveContent":true/i', $html)) {
-            $isLive = true;
-        }
-    }
+    foreach ($endpoints as $url) {
+        $html = @file_get_contents($url, false, $ctx);
+        if (!$html) continue;
 
-    // 3. Fallbacks if needed
-    if (!$title) {
-        if (preg_match('/"title":\{"runs":\[\{"text":"(.*?)"\}\]/', $html, $m)) {
-            $title = $m[1];
-        } elseif (preg_match('/<title>(.*?) - YouTube<\/title>/', $html, $m)) {
-            $title = $m[1];
+        // 1. Canonical tag
+        if (preg_match('/<link rel="canonical" href="https:\/\/www\.youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})"/', $html, $m)) {
+            $videoId = $m[1];
         }
-    }
 
-    if (preg_match('/"isLiveNow":true/i', $html)) {
-        $isLive = true;
+        // 2. OpenGraph / Twitter meta tags
+        if (!$videoId && preg_match('/<meta property="og:url" content="https:\/\/www\.youtube\.com\/watch\?v=([a-zA-Z0-9_-]{11})"/', $html, $m)) {
+            $videoId = $m[1];
+        }
+        if (!$videoId && preg_match('/<meta property="og:video:url" content="https:\/\/www\.youtube\.com\/embed\/([a-zA-Z0-9_-]{11})"/', $html, $m)) {
+            $videoId = $m[1];
+        }
+
+        // 3. Streams tab LIVE overlay targetId
+        if (!$videoId && preg_match('/"text":"LIVE"[^}]+?"animationActivationTargetId":"([a-zA-Z0-9_-]{11})"/', $html, $m)) {
+            $videoId = $m[1];
+        }
+        if (!$videoId && preg_match('/https:\/\/i\.ytimg\.com\/vi\/([a-zA-Z0-9_-]{11})\/[^"]+[\s\S]{1,500}?"text":"LIVE"/', $html, $m)) {
+            $videoId = $m[1];
+        }
+
+        // Check title
+        if (!$title) {
+            if (preg_match('/<meta property="og:title" content="(.*?)"/', $html, $m)) {
+                $title = $m[1];
+            } elseif (preg_match('/<title>(.*?) - YouTube<\/title>/', $html, $m)) {
+                $title = $m[1];
+            }
+        }
+
+        $hasLive = strpos($html, '"isLive":true') !== false ||
+                   strpos($html, '"isLiveNow":true') !== false ||
+                   strpos($html, '"isLiveContent":true') !== false ||
+                   strpos($html, '"text":"LIVE"') !== false ||
+                   strpos($html, 'THUMBNAIL_OVERLAY_BADGE_STYLE_LIVE') !== false;
+
+        if ($videoId) {
+            $isLive = $hasLive;
+            break;
+        }
     }
     
     return [
