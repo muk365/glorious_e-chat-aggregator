@@ -51,8 +51,8 @@ let currentYtVideoId = STREAMER.defaultYtVideoId;
 let currentYtTitle = 'Live Stream';
 let currentYtIsLive = false;
 let recentMessages = [];
-const MAX_HISTORY = 400;
-const MAX_HIGHLIGHT_HISTORY = 150;
+const MAX_HISTORY = 1200;
+const MAX_HIGHLIGHT_HISTORY = 500;
 const recentHighlights = []; // dedicated buffer so subs and highlights are never lost on reload
 const wsClients = new Set();
 

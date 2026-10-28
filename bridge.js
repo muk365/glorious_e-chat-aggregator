@@ -21,8 +21,8 @@ const STREAMER = {
 // Global state
 let currentYtVideoId = STREAMER.defaultYtVideoId;
 let recentMessages = [];
-const MAX_HISTORY = 400;
-const MAX_HIGHLIGHT_HISTORY = 150;
+const MAX_HISTORY = 1200;
+const MAX_HIGHLIGHT_HISTORY = 500;
 const recentHighlights = [];
 const clients = new Set();
 const pendingFirstChatters = new Map();

@@ -16,7 +16,8 @@
             twitchUserId: '63304572'
         },
         defaultYtVideoId: 'y2I6AtvDqyk',
-        maxMessagesInDom: 1000
+        maxMessagesInDom: 2500,
+        maxHighlightsInDom: 800
     };
 
     // Bots to ignore for @mentions
@@ -43,6 +44,7 @@
         bridgeConnected: false,
         autoScroll: true,
         unreadCount: 0,
+        domHighlightCount: 0,
         mentionsOnly: false,
         subsOnly: false,
         filters: {
@@ -320,7 +322,7 @@
         if (msg.id) state.seenMessageIds.add(msg.id);
         
         // Keep deduplication set bounded
-        if (state.seenMessageIds.size > 1000) {
+        if (state.seenMessageIds.size > 5000) {
             const first = state.seenMessageIds.values().next().value;
             state.seenMessageIds.delete(first);
         }
@@ -449,13 +451,32 @@
             }
         }
 
-        // Prune old DOM elements: prioritize removing regular messages to protect subs and mentions
+        if (isMentioned || isSubEvent) {
+            state.domHighlightCount++;
+        }
+
+        // Prune old DOM elements: keep up to CONFIG.maxMessagesInDom (2500)
+        // Protects subs and mentions by prioritizing removal of regular messages,
+        // while bounding highlights at CONFIG.maxHighlightsInDom (800) so regular chat is never crowded out
         if (elements.chatFeed.children.length > CONFIG.maxMessagesInDom) {
-            const oldestNormal = elements.chatFeed.querySelector('.chat-message-row:not(.streamer-highlight):not(.sub-highlight)');
-            if (oldestNormal) {
-                elements.chatFeed.removeChild(oldestNormal);
+            let toRemove = null;
+            if (state.domHighlightCount > CONFIG.maxHighlightsInDom) {
+                // If highlights have reached their dedicated cap, prune the oldest highlight
+                toRemove = elements.chatFeed.querySelector('.chat-message-row.streamer-highlight, .chat-message-row.sub-highlight');
             } else {
-                elements.chatFeed.removeChild(elements.chatFeed.firstElementChild);
+                // Otherwise prioritize pruning the oldest regular message to protect subs & mentions
+                toRemove = elements.chatFeed.querySelector('.chat-message-row:not(.streamer-highlight):not(.sub-highlight)');
+            }
+
+            if (!toRemove) {
+                toRemove = elements.chatFeed.firstElementChild;
+            }
+
+            if (toRemove) {
+                if (toRemove.classList.contains('streamer-highlight') || toRemove.classList.contains('sub-highlight')) {
+                    state.domHighlightCount = Math.max(0, state.domHighlightCount - 1);
+                }
+                elements.chatFeed.removeChild(toRemove);
             }
         }
 
@@ -1005,6 +1026,7 @@
         elements.btnClearChat.addEventListener('click', () => {
             elements.chatFeed.innerHTML = '';
             state.seenMessageIds.clear();
+            state.domHighlightCount = 0;
             state.unreadCount = 0;
             updateUnreadBadge();
             showToast('Chat cleared', 'info');
