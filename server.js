@@ -1478,79 +1478,142 @@ const server = http.createServer(async (req, res) => {
         return;
     }
     
-    // Static File Serving
-    let safePath = path.normalize(decodeURIComponent(pathname)).replace(/^(\.\.[\/\\])+/, '');
-    if (safePath === '/' || safePath === '\\') {
-        safePath = '/index.html';
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+// Static File Serving
+let safePath = path.normalize(decodeURIComponent(pathname)).replace(/^(\.\.[\/\\])+/, '');
+if (safePath === '/' || safePath === '\\') {
+    safePath = '/index.html';
+}
+
+// Dynamically inject current YouTube stream status into index.html
+if (safePath === '/index.html') {
+    let indexPath = path.join(PUBLIC_DIR, 'index.html');
+    if (!fs.existsSync(indexPath)) {
+        indexPath = path.join(__dirname, 'index.html');
     }
-    
-    let filePath = path.join(PUBLIC_DIR, safePath);
-    
-    // If not in public/, fallback to root directory for backwards compatibility
-    if (!fs.existsSync(filePath)) {
-        filePath = path.join(__dirname, safePath);
+    if (fs.existsSync(indexPath)) {
+        try {
+            let html = fs.readFileSync(indexPath, 'utf8');
+            if (currentYtVideoId) {
+                html = html.replace(/id="initialYtVideoId"\s+value="[^"]*"/, `id="initialYtVideoId" value="${escapeHtml(currentYtVideoId)}"`);
+            }
+            if (currentYtTitle) {
+                html = html.replace(/id="initialYtTitle"\s+value="[^"]*"/, `id="initialYtTitle" value="${escapeHtml(currentYtTitle)}"`);
+            }
+            html = html.replace(/id="initialYtIsLive"\s+value="[^"]*"/, `id="initialYtIsLive" value="${currentYtIsLive ? '1' : '0'}"`);
+            res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+            res.end(html);
+            return;
+        } catch (errHtml) {
+            console.warn('[Server] Error dynamically serving index.html:', errHtml.message);
+        }
     }
-    
-    if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
-        const ext = path.extname(filePath).toLowerCase();
-        const mime = MIME_TYPES[ext] || 'application/octet-stream';
-        res.writeHead(200, { 'Content-Type': mime });
-        fs.createReadStream(filePath).pipe(res);
-        return;
-    }
-    
-    // Fallback 404
-    res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end('Not Found');
+}
+
+let filePath = path.join(PUBLIC_DIR, safePath);
+
+// If not in public/, fallback to root directory for backwards compatibility
+if (!fs.existsSync(filePath)) {
+    filePath = path.join(__dirname, safePath);
+}
+
+if (fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+    const ext = path.extname(filePath).toLowerCase();
+    const mime = MIME_TYPES[ext] || 'application/octet-stream';
+    res.writeHead(200, { 'Content-Type': mime });
+    fs.createReadStream(filePath).pipe(res);
+    return;
+}
+
+// Fallback 404
+res.writeHead(404, { 'Content-Type': 'text/plain' });
+res.end('Not Found');
 });
 
 // WebSocket Upgrade Handler
 server.on('upgrade', (req, socket, head) => {
-    const key = req.headers['sec-websocket-key'];
-    if (!key) {
-        socket.destroy();
-        return;
-    }
+const key = req.headers['sec-websocket-key'];
+if (!key) {
+    socket.destroy();
+    return;
+}
+
+const digest = crypto.createHash('sha1')
+    .update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
+    .digest('base64');
     
-    const digest = crypto.createHash('sha1')
-        .update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
-        .digest('base64');
-        
-    socket.write(
-        'HTTP/1.1 101 Switching Protocols\r\n' +
-        'Upgrade: websocket\r\n' +
-        'Connection: Upgrade\r\n' +
-        'Sec-WebSocket-Accept: ' + digest + '\r\n\r\n'
-    );
-    
-    wsClients.add(socket);
-    console.log(`[WebSocket] Client connected. Total: ${wsClients.size}`);
-    
-    const history = getFullHistory();
-    if (history.length > 0) {
-        sendWsFrame(socket, JSON.stringify({
-            type: 'history',
-            messages: history
-        }));
-    }
-    
-    socket.on('close', () => wsClients.delete(socket));
-    socket.on('error', () => wsClients.delete(socket));
+socket.write(
+    'HTTP/1.1 101 Switching Protocols\r\n' +
+    'Upgrade: websocket\r\n' +
+    'Connection: Upgrade\r\n' +
+    'Sec-WebSocket-Accept: ' + digest + '\r\n\r\n'
+);
+
+wsClients.add(socket);
+console.log(`[WebSocket] Client connected. Total: ${wsClients.size}`);
+
+// Immediately send current YouTube stream status on connect
+sendWsFrame(socket, JSON.stringify({
+    type: 'yt_update',
+    videoId: currentYtVideoId,
+    title: currentYtTitle,
+    isLive: currentYtIsLive
+}));
+
+const history = getFullHistory();
+if (history.length > 0) {
+    sendWsFrame(socket, JSON.stringify({
+        type: 'history',
+        messages: history
+    }));
+}
+
+socket.on('close', () => wsClients.delete(socket));
+socket.on('error', () => wsClients.delete(socket));
 });
 
 server.listen(PORT, '0.0.0.0', () => {
-    console.log(`=======================================================`);
-    console.log(` Glorious_E Multi-Chat Server running on port ${PORT}`);
-    console.log(` Local URL: http://localhost:${PORT}`);
-    console.log(`=======================================================`);
-    
-    // Bootstrap services
-    initTwitch();
-    initKick();
-    getYouTubeLiveStatus().then(() => {
-        clearInterval(ytPollTimer);
-        ytPollTimer = setInterval(pollYouTubeChat, 2200);
-        pollYouTubeChat();
-    });
-    get7TvEmotes();
+console.log(`=======================================================`);
+console.log(` Glorious_E Multi-Chat Server running on port ${PORT}`);
+console.log(` Local URL: http://localhost:${PORT}`);
+console.log(`=======================================================`);
+
+// Bootstrap services
+initTwitch();
+initKick();
+getYouTubeLiveStatus(true).then(() => {
+    clearInterval(ytPollTimer);
+    ytPollTimer = setInterval(pollYouTubeChat, 2200);
+    pollYouTubeChat();
+});
+get7TvEmotes();
+
+// Periodic background auto-check for YouTube live stream (every 90 seconds)
+setInterval(async () => {
+    try {
+        const prevId = currentYtVideoId;
+        const prevLive = currentYtIsLive;
+        const status = await getYouTubeLiveStatus(true);
+        if (status && status.videoId && (status.videoId !== prevId || status.isLive !== prevLive)) {
+            console.log(`[YouTube Live] Stream auto-updated: ${status.videoId} (${status.title}) isLive=${status.isLive}`);
+            broadcast({
+                type: 'yt_update',
+                videoId: status.videoId,
+                title: status.title,
+                isLive: status.isLive
+            });
+        }
+    } catch (e) {
+        console.warn('[YouTube Live] Periodic check failed:', e.message);
+    }
+}, 90000);
 });

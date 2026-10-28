@@ -569,6 +569,18 @@
                         for (const m of data.messages) {
                             appendMessage(m);
                         }
+                    } else if (data.type === 'yt_update') {
+                        if (data.videoId && (data.videoId !== state.ytVideoId || data.isLive !== state.ytIsLive)) {
+                            const prevId = state.ytVideoId;
+                            state.ytVideoId = data.videoId;
+                            state.ytTitle = data.title || 'Live Stream';
+                            state.ytIsLive = !!data.isLive;
+                            if (elements.ytIdBadge) elements.ytIdBadge.textContent = state.ytVideoId;
+                            if (elements.ytStreamTitle) elements.ytStreamTitle.textContent = state.ytTitle;
+                            if (prevId && prevId !== data.videoId && data.isLive) {
+                                showToast(`YouTube stream auto-connected: ${data.title || data.videoId}`, 'success');
+                            }
+                        }
                     } else if (data.platform && data.message) {
                         appendMessage(data);
                     }
@@ -609,9 +621,11 @@
 
     /**
      * Auto-detect YouTube live stream
+     * @param {boolean} force - Force refresh bypassing cache
+     * @param {boolean} silent - Silent background execution (no button disable / no toast unless stream changes)
      */
-    async function autoDetectYouTubeLive(force = false) {
-        if (elements.btnDetectYt) {
+    async function autoDetectYouTubeLive(force = false, silent = false) {
+        if (!silent && elements.btnDetectYt) {
             elements.btnDetectYt.disabled = true;
             elements.btnDetectYt.innerHTML = '🔄 Checking...';
         }
@@ -622,6 +636,7 @@
             const data = await res.json();
 
             if (data && data.videoId && data.isLive) {
+                const changed = (state.ytVideoId !== data.videoId);
                 state.ytVideoId = data.videoId;
                 state.ytTitle = data.title || 'Live Stream';
                 state.ytIsLive = true;
@@ -630,8 +645,10 @@
                 if (elements.ytStreamTitle) elements.ytStreamTitle.textContent = state.ytTitle;
                 
                 fetch(`/api/set_yt?v=${encodeURIComponent(state.ytVideoId)}`).catch(()=>{});
-                showToast(`YouTube live stream detected: ${data.title || data.videoId}`, 'success');
-            } else if (data && data.videoId && force) {
+                if (!silent || changed) {
+                    showToast(`YouTube live stream: ${data.title || data.videoId}`, 'success');
+                }
+            } else if (data && data.videoId && force && !silent) {
                 state.ytVideoId = data.videoId;
                 state.ytTitle = data.title || 'Live Stream';
                 state.ytIsLive = !!data.isLive;
@@ -639,13 +656,13 @@
                 if (elements.ytStreamTitle) elements.ytStreamTitle.textContent = state.ytTitle;
                 fetch(`/api/set_yt?v=${encodeURIComponent(state.ytVideoId)}`).catch(()=>{});
                 showToast(data.isLive ? `YouTube stream detected: ${data.title || data.videoId}` : `Channel stream: ${data.title || data.videoId} (offline)`, data.isLive ? 'success' : 'info');
-            } else {
+            } else if (!silent) {
                 showToast('No active YouTube live stream detected. Keeping current.', 'info');
             }
         } catch (e) {
-            showToast('Could not query YouTube status.', 'error');
+            if (!silent) showToast('Could not query YouTube status.', 'error');
         } finally {
-            if (elements.btnDetectYt) {
+            if (!silent && elements.btnDetectYt) {
                 elements.btnDetectYt.disabled = false;
                 elements.btnDetectYt.innerHTML = '🔄 Auto-Detect Live';
             }
@@ -1127,8 +1144,13 @@
         // 3. Connect to the WebSocket server
         connectBridge();
 
-        // 4. Auto-detect today's YouTube stream
-        autoDetectYouTubeLive(false);
+        // 4. Auto-detect today's YouTube stream immediately on load (force=true for fresh live check, silent=true)
+        autoDetectYouTubeLive(true, true);
+
+        // 5. Periodic background auto-check every 90 seconds
+        setInterval(() => {
+            autoDetectYouTubeLive(false, true);
+        }, 90000);
     }
 
     if (document.readyState === 'loading') {

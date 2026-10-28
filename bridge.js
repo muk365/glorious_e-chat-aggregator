@@ -711,6 +711,14 @@ server.on('upgrade', (req, socket, head) => {
     clients.add(socket);
     console.log(`[Server] New browser connected. Total clients: ${clients.size}`);
     
+    // Immediately inform browser of current YouTube stream ID
+    sendWsFrame(socket, JSON.stringify({
+        type: 'yt_update',
+        videoId: currentYtVideoId,
+        title: 'Live Stream',
+        isLive: true
+    }));
+
     // Immediately send history on connect
     const history = getFullHistory();
     if (history.length > 0) {
